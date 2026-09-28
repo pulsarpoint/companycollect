@@ -1,48 +1,54 @@
-# dns_detect slices 0–1 Implementation Plan
+# dns_detect slices 0–1 Implementation Plan (revision 2: per-record resolver)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Two things:
 1. Provider-recon keeps removed items indefinitely (slice 0).
-2. A new, isolated Go module `services/dns_detect` (slice 1) turns one domain's DNS records into `(service_type, provider)` services with evidence, as of a date.
-   - It uses the NS, SOA, MX and CNAME analyzers, a knowledge index compiled from provider-recon documents, and a streaming CLI.
+2. Inside the provider-recon Go module, a pure per-record resolver (slice 1). It turns one DNS record instance into the `(service_type, provider)` services it proves, each carrying the record's window. It has NS, SOA (fallback), MX and CNAME analyzers, a knowledge index compiled from provider-recon documents through the shared `internal/matcher`, and a streaming `dns-detect resolve` CLI.
 
 **Architecture:**
-- **Packages:** `internal/model` (contract and `Snapshot`), `internal/hosts` (normalisation, public-suffix registrable domain), `internal/knowledge` (immutable `Index` behind a `Knowledge` interface), `internal/analyze` (one analyzer per record type plus the shared `LabelHost` fallback), `internal/engine` (snapshot, route, aggregate, deterministic order), and `cmd/dns-detect`.
-- **Injected knowledge:** analyzers only see the `Knowledge` interface, so their tests inject a fake.
-- **Verified before writing:** all code below was prototyped and passes `go test -race ./...`, `go vet` and gofmt. The CLI was also smoke-tested on the 37 production documents with real spotify.com, volvo.com and loopia.se records. Slice 0 was verified on a throwaway tree at 05fcb87d8+: 9/9 provider-recon packages pass.
+- **Packages** in `services/provider_recon`:
+  - `internal/detect/hosts`: normalisation and registrable domain, via `golang.org/x/net/publicsuffix`.
+  - `internal/detect/knowledge`: an immutable `Index` behind the `Knowledge` interface, compiled from `[]model.Document`, with patterns from `matcher.Compile`.
+  - `internal/detect/resolve`: the `Record`/`Result`/`Finding`/`Output` types, `LabelHost`, the analyzers, `Route` and `Resolve`.
+  - `cmd/dns-detect`: the CLI.
+- **Resolving:** `Resolve(record, kb)` routes the record by type and name to one analyzer. The window is copied onto every result, and the output is sorted.
+- **Verified before writing:** all code below was prototyped in the module and passes `go test -race ./...` (13 packages), `go vet` and gofmt. It was also run on the 134 real NS/SOA/MX/CNAME records of spotify.com, volvo.com and loopia.se, against the 37 production documents (Task 4, Step 4).
 
-**Tech Stack:** Go 1.26 (module directive `go 1.26.0`), `golang.org/x/net/publicsuffix` v0.59.0, stdlib testing.
+**Tech Stack:** Go 1.25 (the module directive stays `go 1.25.0`), `golang.org/x/net` v0.50.0 (v0.59 would force go 1.26), stdlib testing.
 
-**Spec:** `docs/superpowers/specs/2026-09-28-dns-detect-service-design.md` (owner-approved 2026-09-28, head 536f87417). Slices 2 (SPF/DKIM/DMARC/TXT and the new rule kinds) and 3 (the IP analyzer, `ChangePoints`, golden tests) are later plans.
+**Spec:** `docs/superpowers/specs/2026-09-28-dns-detect-service-design.md` (revision 2, owner-approved 2026-09-28). This plan covers "Owner decisions", "Input", "Output", "Knowledge", "Rule kinds" (compile-time refusal), "Routing and analyzers" (slice-1 rows) and "Testing". Slices 2–4 are later plans.
 
 ## Global Constraints
 
-- `dns_detect` never imports provider-recon packages. It decodes the published `provider-recon/v1` JSON with its own types.
-- Knowledge is compiled once, immutable, and injected. No analyzer loads or reads anything else.
-- Compilation refuses:
-  - rule kinds outside the spec's list (NS/target, MX/target, CNAME/target, TXT/value, TXT/name, SPF/include, DKIM/selector, DKIM/target, DMARC/report);
-  - unknown matchers;
-  - invalid regexes;
+- **Location:** everything lives in the provider-recon module. It reuses `internal/model` (documents) and `internal/matcher` (pattern semantics), and never re-declares them.
+- **Knowledge** is compiled once, immutable, and injected. Analyzers never load or read anything else.
+- **Compilation refuses:**
+  - rule kinds outside NS/target, MX/target, CNAME/target, TXT/value, TXT/name, SPF/include, DKIM/selector, DKIM/target, DMARC/report;
+  - invalid patterns;
   - other contract versions;
   - a provider key claimed by two providers.
-- Same input, same result, same order.
-- Empty lists serialise as `[]`, never `null`.
-- `asOf` means the domain's latest observation at or before that date (spec, Time). `observed_at` is reported.
-- Confidence without a rule: key match 0.8, self-hosted 0.8, unmapped 0.5. A rule's own confidence otherwise.
-- Git:
+- **Compilation skips** removed rules and removed services.
+- **`knowledge.Version()`** hashes each document's `model.ContentHash`, so it changes only with provider content.
+- **Output:**
+  - The same record and knowledge give byte-identical output.
+  - Empty lists serialise as `[]`.
+  - Every result carries the record's `record_id`, name, type and window (`valid_from`/`valid_to`, the date part of `first_seen`/`last_seen`).
+- **Confidence** without a rule: key match 0.8, self-hosted 0.8, unmapped 0.5. A rule's own confidence otherwise.
+- **SOA results** are `fallback: true`.
+- **Git:**
   - commit by explicit path from the `corpscout` root;
   - Conventional Commits, each ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`;
   - work in a worktree under `companycollect/.worktrees/`.
-- Checks per Go module: `go test -race ./...`, `go vet ./...`, and `test -z "$(gofmt -l .)"`.
+- **Checks** (in `services/provider_recon`): `go test -race ./...`, `go vet ./...`, and `test -z "$(gofmt -l .)"`.
 
 ## Review Focus
 
-1. **A record instance with only `first_seen`**, open-ended and still present. Expected: it counts through `asOf` and sets `observed` to `asOf`. *(Task 1: `TestSnapshotUsesLatestObservationAtOrBeforeAsOf` covers dated and undated records. Add a first_seen-only row if the reviewer finds the rule unclear.)*
-2. **Hosts that are IP literals, bare public suffixes or garbage in NS/MX/CNAME.** Expected: no detection, and no crash. *(Task 3: `192.0.2.53` NS row in `TestNSRuleKeyFallbackSelfHostedAndUnmapped`; Task 1: `TestRegistrable`.)*
-3. **A provider document with a rule of a kind slice 1 doesn't analyse yet** (TXT/SPF…). Expected: it compiles (the kind is in the spec list), and analyzers simply never ask for it. The live documents contain TXT/value and TXT/name rules today. *(Task 2: `TestLoadDirCompilesRealDocuments` uses real documents.)*
-4. **Rule precedence when two providers' rules match one host.** Expected: highest priority, then confidence, then rule id; deterministic. *(Task 2: `TestMatchPrefersPriorityThenConfidenceThenRuleID`.)*
-5. **A large input stream in the CLI.** Expected: it streams one result per input without holding them all, and a malformed input stops with its position number. *(Task 5: `TestDetectRejectsBadInput`, `TestDetectStreamsOneResultPerInput`.)*
+1. **A record whose root_domain differs in case or trailing dot from its name** (`Example.SE.` vs `EXAMPLE.se.`). Expected: both are normalised before routing, so it routes as apex. *(Task 3: `TestResultsCarryTheRecordAndItsWindow`.)*
+2. **Hosts that are IP literals, a lone `.`, or under the domain itself.** Expected: nothing for the first two, `self-hosted` for the third. *(Task 3: `TestNSRuleProviderKeySelfHostedUnmappedAndIP`.)*
+3. **Real documents with rule kinds slice 1 doesn't analyse** (TXT/value, TXT/name exist in production). Expected: they compile, and no analyzer asks for them. *(Task 2: `TestLoadDirCompilesRealDocuments`.)*
+4. **Two providers' rules match one host.** Expected: highest priority, then confidence, then rule id; deterministic. *(Task 2: `TestMatchPrefersPriorityThenConfidenceThenRuleID`.)*
+5. **A malformed or incomplete record in a large CLI stream.** Expected: the stream stops with the record's position number and exit code 1; earlier lines are already written. *(Task 4: `TestResolveRejectsBadRecords`.)*
 
 ---
 
@@ -218,82 +224,18 @@ Expected: `{"status":"succeeded","issues":0}`.
 
 ---
 
-### Task 1: Module skeleton, model and hosts
+### Task 1: Host normalisation and provider keys
 
 **Files:**
-- Create: `services/dns_detect/go.mod`, `go.sum`, `internal/model/model.go`, `internal/model/model_test.go`, `internal/hosts/hosts.go`, `internal/hosts/hosts_test.go`
+- Create: `internal/detect/hosts/hosts.go`, `internal/detect/hosts/hosts_test.go`
+- Modify: `go.mod`, `go.sum`
 
-**Interfaces:**
-- Produces: `model.Record`, `model.Input`, `model.Evidence`, `model.Service`, `model.Finding` and `model.Result` (with `ObservedAt`); `model.Snapshot(records, asOf) ([]Record, string)`; `model.SelfHosted`.
-- Produces: `hosts.Normalize`, `hosts.Registrable` and `hosts.Under`.
+**Interfaces:** Produces:
+- `hosts.Normalize(host) string`: lower-cased, trimmed, no trailing dot;
+- `hosts.Registrable(host) string`: eTLD+1 from the public suffix list, `""` for IPs, bare suffixes and garbage;
+- `hosts.Under(host, domain) bool`.
 
-- [ ] **Step 1: Module.** From `corpscout/services`, run `mkdir dns_detect && cd dns_detect && go mod init dns_detect`, then set the directive to `go 1.26.0`.
-
-- [ ] **Step 2: Failing tests.** `internal/model/model_test.go`:
-
-```go
-package model
-
-import (
-	"reflect"
-	"testing"
-)
-
-func values(rs []Record) []string {
-	out := []string{}
-	for _, r := range rs {
-		out = append(out, r.Value)
-	}
-	return out
-}
-
-// Point scans on 08-10, 09-19 and 09-26: each instance carries its scan's window.
-var scans = []Record{
-	{Value: "ns-a", FirstSeen: "2026-08-10", LastSeen: "2026-08-10"},
-	{Value: "ns-a", FirstSeen: "2026-09-19", LastSeen: "2026-09-19 00:00:00.000"},
-	{Value: "ns-b", FirstSeen: "2026-09-19", LastSeen: "2026-09-19"},
-	{Value: "ns-a", FirstSeen: "2026-09-26", LastSeen: "2026-09-26"},
-	{Value: "always"},
-}
-
-func TestSnapshotUsesLatestObservationAtOrBeforeAsOf(t *testing.T) {
-	for _, c := range []struct {
-		asOf, observed string
-		want           []string
-	}{
-		{"2026-09-25", "2026-09-19", []string{"ns-a", "ns-b", "always"}},
-		{"2026-09-19", "2026-09-19", []string{"ns-a", "ns-b", "always"}},
-		{"2026-08-20", "2026-08-10", []string{"ns-a", "always"}},
-		{"2026-12-31", "2026-09-26", []string{"ns-a", "always"}},
-		{"2026-01-01", "", []string{"always"}},
-	} {
-		got, observed := Snapshot(scans, c.asOf)
-		if !reflect.DeepEqual(values(got), c.want) || observed != c.observed {
-			t.Errorf("Snapshot(%s) = %v @%s, want %v @%s", c.asOf, values(got), observed, c.want, c.observed)
-		}
-	}
-}
-
-func TestSnapshotCarriesTheLastObservationForward(t *testing.T) {
-	dated := scans[:4]
-	got, observed := Snapshot(dated, "2027-03-01")
-	if !reflect.DeepEqual(values(got), []string{"ns-a"}) || observed != "2026-09-26" {
-		t.Fatalf("after the last scan: %v @%s, want [ns-a] @2026-09-26", values(got), observed)
-	}
-	got, observed = Snapshot(dated, "2026-09-25")
-	if !reflect.DeepEqual(values(got), []string{"ns-a", "ns-b"}) || observed != "2026-09-19" {
-		t.Fatalf("between scans: %v @%s", values(got), observed)
-	}
-	if got, _ := Snapshot(dated, "2026-01-01"); len(got) != 0 {
-		t.Fatalf("before the first scan: %v", values(got))
-	}
-	if got, observed := Snapshot(dated, ""); len(got) != 4 || observed != "" {
-		t.Fatal("empty asOf must keep every record")
-	}
-}
-```
-
-`internal/hosts/hosts_test.go`:
+- [ ] **Step 1: Failing test.** `internal/detect/hosts/hosts_test.go`:
 
 ```go
 package hosts
@@ -339,123 +281,10 @@ func TestUnder(t *testing.T) {
 }
 ```
 
-Run: `go test ./...`
-Expected: FAIL (undefined: `Snapshot`, `Record`, `Normalize`, …).
+Run: `go test ./internal/detect/hosts/`
+Expected: FAIL (undefined: `Normalize`, `Registrable`, `Under`).
 
-- [ ] **Step 3: Implement.** Run `go get golang.org/x/net@v0.59.0`.
-
-`internal/model/model.go`:
-
-```go
-// Package model is the dns_detect JSON contract: the records a caller sends
-// and the services and evidence it gets back.
-package model
-
-// Record is one DNS record as the DNS store keeps it: presentation type and
-// RDATA, with the dates it was seen. Dates are YYYY-MM-DD; an empty
-// FirstSeen/LastSeen leaves that side of the window open.
-type Record struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Value     string `json:"value"`
-	FirstSeen string `json:"first_seen,omitempty"`
-	LastSeen  string `json:"last_seen,omitempty"`
-}
-
-func day(date string) string { return date[:min(len(date), 10)] }
-
-// Snapshot returns the records describing the domain as of asOf
-// (YYYY-MM-DD), and the date of that observation.
-//
-// DNS observations are point scans: a record instance is stamped with the
-// scans that saw it, so a date between two scans lies inside no window. The
-// snapshot is therefore the domain's latest observation at or before asOf:
-// observed = max over records with first_seen <= asOf of min(last_seen, asOf),
-// and the records kept are those with first_seen <= asOf and last_seen >=
-// observed. After the last scan this carries the last known state forward.
-// An empty asOf keeps every record; a record without dates is always kept
-// and does not move the observation date.
-func Snapshot(records []Record, asOf string) ([]Record, string) {
-	if asOf == "" {
-		return records, ""
-	}
-	observed := ""
-	for _, r := range records {
-		if r.FirstSeen == "" && r.LastSeen == "" {
-			continue // undated: always present, says nothing about when the domain was observed
-		}
-		if r.FirstSeen != "" && day(r.FirstSeen) > asOf {
-			continue
-		}
-		last := asOf
-		if r.LastSeen != "" && day(r.LastSeen) < asOf {
-			last = day(r.LastSeen)
-		}
-		observed = max(observed, last)
-	}
-	var out []Record
-	for _, r := range records {
-		if r.FirstSeen != "" && day(r.FirstSeen) > asOf {
-			continue
-		}
-		if r.LastSeen != "" && day(r.LastSeen) < observed {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, observed
-}
-
-// Input is one domain and all its records.
-type Input struct {
-	Domain  string   `json:"domain"`
-	Records []Record `json:"records"`
-}
-
-// Evidence is one record (or part of one) that proves a service.
-type Evidence struct {
-	Analyzer   string  `json:"analyzer"`
-	RecordName string  `json:"record_name"`
-	RecordType string  `json:"record_type"`
-	Value      string  `json:"value"`
-	RuleID     string  `json:"rule_id,omitempty"`
-	Confidence float64 `json:"confidence"`
-}
-
-// Service is one (service type, provider) the domain uses, with its evidence.
-// ProviderKey is the provider-recon slug for a named provider, the
-// registrable domain for an unmapped one, and "self-hosted".
-type Service struct {
-	ServiceType  string     `json:"service_type"`
-	ProviderKey  string     `json:"provider_key"`
-	ProviderSlug string     `json:"provider_slug"`
-	ServiceKeys  []string   `json:"service_keys"`
-	Confidence   float64    `json:"confidence"`
-	Evidence     []Evidence `json:"evidence"`
-}
-
-// Finding is an observation that is not a service (e.g. two SPF records).
-type Finding struct {
-	Analyzer string `json:"analyzer"`
-	Code     string `json:"code"`
-	Detail   string `json:"detail,omitempty"`
-}
-
-// Result is the answer for one domain at one date.
-type Result struct {
-	Domain           string    `json:"domain"`
-	AsOf             string    `json:"as_of,omitempty"`
-	ObservedAt       string    `json:"observed_at,omitempty"`
-	KnowledgeVersion string    `json:"knowledge_version"`
-	Services         []Service `json:"services"`
-	Findings         []Finding `json:"findings"`
-}
-
-// SelfHosted is the provider key of evidence that points at the domain itself.
-const SelfHosted = "self-hosted"
-```
-
-`internal/hosts/hosts.go`:
+- [ ] **Step 2: Implement.** Run `go get golang.org/x/net@v0.50.0`, then create `internal/detect/hosts/hosts.go`:
 
 ```go
 // Package hosts normalises DNS host names and derives provider keys.
@@ -494,26 +323,18 @@ func Under(host, domain string) bool {
 }
 ```
 
-Run `go mod tidy`. `go.mod` must then read:
+Then run `go mod tidy`. The only `go.mod` change must be `golang.org/x/net v0.50.0` in the direct `require` block, with the directive still `go 1.25.0`.
 
-```
-module dns_detect
-
-go 1.26.0
-
-require golang.org/x/net v0.59.0
-```
-
-- [ ] **Step 4: Run.**
+- [ ] **Step 3: Run.**
 
 Run: `go test -race ./... && go vet ./... && test -z "$(gofmt -l .)"`
-Expected: PASS (model, hosts).
+Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 4: Commit.**
 
 ```bash
-git add services/dns_detect/go.mod services/dns_detect/go.sum services/dns_detect/internal/model services/dns_detect/internal/hosts
-git commit -m "feat(dns_detect): module with the record/result contract, point-scan snapshots and host keys
+git add services/provider_recon/go.mod services/provider_recon/go.sum services/provider_recon/internal/detect/hosts
+git commit -m "feat(provider_recon): detect/hosts — host normalisation and public-suffix provider keys
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -523,59 +344,53 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ### Task 2: Knowledge index
 
 **Files:**
-- Create: `internal/knowledge/document.go`, `knowledge.go`, `load.go`, `knowledge_test.go`, and `testdata/providers/{beebyte,cloudflare,glesys,godaddy,loopia}.json`
+- Create: `internal/detect/knowledge/knowledge.go`, `load.go`, `knowledge_test.go`, and `testdata/providers/{beebyte,cloudflare,glesys,godaddy,loopia}.json`
 
 **Interfaces:**
+- Consumes: `model.Document`, `model.ContractVersion`, `model.ContentHash`, `model.StatusRemoved`, and `matcher.Compile`/`Pattern.Match`.
 - Produces:
   - `knowledge.Kind`, with vars `NSTarget`, `MXTarget`, `CNAMETarget`, `TXTValue`, `TXTName`, `SPFInclude`, `DKIMSelector`, `DKIMTarget`, `DMARCReport`;
   - `knowledge.Match{ProviderSlug, ServiceKey, ServiceTypes, RuleID, Confidence}`;
-  - `knowledge.Provider{Slug, Name, Country, Services []ProviderService}` with `FirstService(serviceType) string`, and `knowledge.ProviderService{Key, Types}`;
-  - `knowledge.Knowledge` (`Match`, `ProviderForKey`, `Version`);
-  - `knowledge.Compile([][]byte) (*Index, error)` and `knowledge.LoadDir(dir) (*Index, error)`.
+  - `knowledge.Provider{Slug, Name, Country, Services []ProviderService}` with `FirstService(t) string`, and `knowledge.ProviderService{Key, Types}`;
+  - the interface `knowledge.Knowledge` (`Match`, `ProviderForKey`, `Version`);
+  - `knowledge.Compile([]model.Document) (*Index, error)` and `knowledge.LoadDir(dir) (*Index, error)`.
 
 - [ ] **Step 1: Fixtures**, real production documents, pretty-printed:
 
 ```bash
-cd services/dns_detect && mkdir -p internal/knowledge/testdata/providers
+cd services/provider_recon && mkdir -p internal/detect/knowledge/testdata/providers
 for s in loopia glesys godaddy cloudflare beebyte; do
   ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT json FROM corpscout.provider_recon_documents_s3 WHERE JSONExtractString(json,'slug')='$s' FORMAT RawBLOB\"" \
-  | python3 -c "import json,sys; json.dump(json.load(sys.stdin), open('internal/knowledge/testdata/providers/$s.json','w'), indent=2, sort_keys=True)"
+  | python3 -c "import json,sys; json.dump(json.load(sys.stdin), open('internal/detect/knowledge/testdata/providers/$s.json','w'), indent=2, sort_keys=True)"
 done
 ```
 Expected: 5 files, 1–15 KB each. GoDaddy's key is `domaincontrol.com`. Cloudflare has the `cloudflare.dns`, `cloudflare.edge` (cdn, ddos_protection, waf) and `cloudflare.email-routing` services. Loopia's NS and MX rules are suffix `loopia.se`.
 
-- [ ] **Step 2: Failing tests.** `internal/knowledge/knowledge_test.go`:
+- [ ] **Step 2: Failing test.** `internal/detect/knowledge/knowledge_test.go`:
 
 ```go
 package knowledge
 
 import (
-	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"provider_recon/internal/model"
 )
 
-// rule and doc build provider-recon/v1 documents for tests.
-func rule(recordType, field, matcher, pattern string, priority int, confidence float64) map[string]any {
-	return map[string]any{"record_type": recordType, "match_field": field, "matcher_type": matcher,
-		"pattern": pattern, "priority": priority, "confidence": confidence, "status": "active"}
+func rule(recordType, field, matcherType, pattern string, priority int, confidence float64) model.DNSRule {
+	return model.DNSRule{RecordType: recordType, MatchField: field, MatcherType: matcherType, Pattern: pattern,
+		Priority: priority, Confidence: confidence, Lifecycle: model.Lifecycle{Status: model.StatusActive}}
 }
 
-func svc(key string, types []string, rules ...map[string]any) map[string]any {
-	if rules == nil {
-		rules = []map[string]any{}
-	}
-	return map[string]any{"service_key": key, "service_types": types, "evidence": map[string]any{"dns_rules": rules}}
+func svc(key string, types []string, rules ...model.DNSRule) model.Service {
+	return model.Service{Key: key, ServiceTypes: types, Evidence: model.Evidence{DNSRules: rules}}
 }
 
-func doc(t *testing.T, slug string, keys []string, services ...map[string]any) []byte {
-	t.Helper()
-	b, err := json.Marshal(map[string]any{"version": "provider-recon/v1", "slug": slug, "display_name": strings.ToUpper(slug),
-		"provider_keys": keys, "services": services})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
+func doc(slug string, keys []string, services ...model.Service) model.Document {
+	return model.Document{Version: model.ContractVersion, Slug: slug, DisplayName: strings.ToUpper(slug), ProviderKeys: keys, Services: services}
 }
 
 func TestLoadDirCompilesRealDocuments(t *testing.T) {
@@ -588,9 +403,9 @@ func TestLoadDirCompilesRealDocuments(t *testing.T) {
 		subject string
 		service string
 	}{
-		{NSTarget, "ns1.loopia.se", "loopia.dns"},
+		{NSTarget, "ns1.loopia.se.", "loopia.dns"},
 		{NSTarget, "abby.ns.cloudflare.com", "cloudflare.dns"},
-		{NSTarget, "ns51.domaincontrol.com", "godaddy.dns"},
+		{NSTarget, "NS51.DOMAINCONTROL.COM.", "godaddy.dns"},
 		{MXTarget, "route1.mx.cloudflare.net", "cloudflare.email-routing"},
 		{CNAMETarget, "example.com.cdn.cloudflare.net", "cloudflare.edge"},
 	} {
@@ -611,11 +426,24 @@ func TestLoadDirCompilesRealDocuments(t *testing.T) {
 	}
 }
 
+func TestLoadDirRefusesBrokenFiles(t *testing.T) {
+	if _, err := LoadDir(t.TempDir()); err == nil {
+		t.Error("empty directory loaded")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDir(dir); err == nil {
+		t.Error("broken JSON loaded")
+	}
+}
+
 func TestMatchPrefersPriorityThenConfidenceThenRuleID(t *testing.T) {
-	idx, err := Compile([][]byte{
-		doc(t, "a", nil, svc("a.low", []string{"dns"}, rule("NS", "target", "suffix", "example.net", 0, 1))),
-		doc(t, "b", nil, svc("b.high", []string{"dns"}, rule("NS", "target", "suffix", "ns.example.net", 10, 0.5))),
-		doc(t, "c", nil, svc("c.tie", []string{"dns"}, rule("NS", "target", "suffix", "ns.example.net", 10, 0.5))),
+	idx, err := Compile([]model.Document{
+		doc("a", nil, svc("a.low", []string{"dns"}, rule("NS", "target", "suffix", "example.net", 0, 1))),
+		doc("b", nil, svc("b.high", []string{"dns"}, rule("NS", "target", "suffix", "ns.example.net", 10, 0.5))),
+		doc("c", nil, svc("c.tie", []string{"dns"}, rule("NS", "target", "suffix", "ns.example.net", 10, 0.5))),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -628,16 +456,17 @@ func TestMatchPrefersPriorityThenConfidenceThenRuleID(t *testing.T) {
 		t.Fatalf("got %+v; want a.low", m)
 	}
 	if _, ok := idx.Match(NSTarget, "notexample.net"); ok {
-		t.Fatal("suffix matched without a dot boundary")
+		t.Fatal("suffix matched without a label boundary")
 	}
 }
 
-func TestMatcherTypes(t *testing.T) {
-	idx, err := Compile([][]byte{doc(t, "p", nil,
+func TestMatcherTypesComeFromTheSharedMatcher(t *testing.T) {
+	idx, err := Compile([]model.Document{doc("p", nil,
 		svc("p.exact", []string{"email"}, rule("MX", "target", "exact", "mx.p.com", 0, 1)),
 		svc("p.prefix", []string{"saas_verification"}, rule("TXT", "value", "prefix", "p-verification=", 0, 1)),
 		svc("p.contains", []string{"email_sending"}, rule("TXT", "value", "contains", "include:spf.p.com", 0, 1)),
 		svc("p.regex", []string{"dns"}, rule("NS", "target", "regex", `^ns[0-9]+\.p\.com$`, 0, 1)),
+		svc("p.glob", []string{"hosting"}, rule("CNAME", "target", "glob", "*.edge-*.p.net", 0, 1)),
 	)})
 	if err != nil {
 		t.Fatal(err)
@@ -647,12 +476,13 @@ func TestMatcherTypes(t *testing.T) {
 		subject string
 		want    string
 	}{
-		{MXTarget, "MX.P.COM", "p.exact"},
+		{MXTarget, "MX.P.COM.", "p.exact"},
 		{MXTarget, "a.mx.p.com", ""},
 		{TXTValue, "p-verification=abc", "p.prefix"},
 		{TXTValue, "v=spf1 include:spf.p.com ~all", "p.contains"},
-		{NSTarget, "ns12.p.com", "p.regex"},
+		{NSTarget, "ns12.p.com.", "p.regex"},
 		{NSTarget, "xns12.p.com", ""},
+		{CNAMETarget, "site.edge-eu.p.net", "p.glob"},
 	} {
 		m, _ := idx.Match(c.kind, c.subject)
 		if m.ServiceKey != c.want {
@@ -662,8 +492,8 @@ func TestMatcherTypes(t *testing.T) {
 }
 
 func TestProviderKeysExactAndGlob(t *testing.T) {
-	idx, err := Compile([][]byte{
-		doc(t, "aws", []string{"amazonaws.com", "awsdns-*"}, svc("aws.route53", []string{"dns"}), svc("aws.ses", []string{"email_sending"})),
+	idx, err := Compile([]model.Document{
+		doc("aws", []string{"amazonaws.com", "awsdns-*"}, svc("aws.route53", []string{"dns"}), svc("aws.ses", []string{"email_sending"})),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -677,12 +507,12 @@ func TestProviderKeysExactAndGlob(t *testing.T) {
 	}
 }
 
-func TestRemovedRulesAndServicesAreIgnored(t *testing.T) {
+func TestRemovedRulesAndServicesAreSkipped(t *testing.T) {
 	removedRule := rule("NS", "target", "suffix", "old.example.net", 0, 1)
-	removedRule["status"] = "removed"
+	removedRule.Status = model.StatusRemoved
 	removedSvc := svc("p.gone", []string{"dns"}, rule("NS", "target", "suffix", "gone.example.net", 0, 1))
-	removedSvc["removed_at"] = "2026-09-01"
-	idx, err := Compile([][]byte{doc(t, "p", []string{"p.com"}, svc("p.dns", []string{"dns"}, removedRule), removedSvc)})
+	removedSvc.RemovedAt = "2026-09-01"
+	idx, err := Compile([]model.Document{doc("p", []string{"p.com"}, svc("p.dns", []string{"dns"}, removedRule), removedSvc)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,86 +528,46 @@ func TestRemovedRulesAndServicesAreIgnored(t *testing.T) {
 }
 
 func TestCompileRefusesBadKnowledge(t *testing.T) {
-	for name, raw := range map[string][]byte{
-		"unknown kind":    doc(t, "p", nil, svc("p.a", []string{"cdn"}, rule("A", "value", "exact", "192.0.2.1", 0, 1))),
-		"unknown matcher": doc(t, "p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "glob", "*.p.com", 0, 1))),
-		"invalid regex":   doc(t, "p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "regex", "(", 0, 1))),
-		"other contract":  []byte(`{"version":"provider-recon/v2","slug":"p","services":[]}`),
-		"not json":        []byte(`{`),
+	other := doc("p", nil)
+	other.Version = "provider-recon/v2"
+	for name, d := range map[string]model.Document{
+		"unknown kind":    doc("p", nil, svc("p.a", []string{"cdn"}, rule("A", "value", "exact", "192.0.2.1", 0, 1))),
+		"unknown matcher": doc("p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "wildcard", "*.p.com", 0, 1))),
+		"invalid regex":   doc("p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "regex", "(", 0, 1))),
+		"other contract":  other,
 	} {
-		if _, err := Compile([][]byte{raw}); err == nil {
+		if _, err := Compile([]model.Document{d}); err == nil {
 			t.Errorf("%s: compiled without error", name)
 		}
 	}
-	dup := [][]byte{doc(t, "a", []string{"shared.com"}), doc(t, "b", []string{"shared.com"})}
-	if _, err := Compile(dup); err == nil {
+	if _, err := Compile([]model.Document{doc("a", []string{"shared.com"}), doc("b", []string{"shared.com"})}); err == nil {
 		t.Error("a provider key claimed by two providers compiled")
 	}
 }
 ```
 
-Run: `go test ./internal/knowledge/`
+Run: `go test ./internal/detect/knowledge/`
 Expected: FAIL (undefined: `LoadDir`, `Compile`, …).
 
-- [ ] **Step 3: Implement.** `internal/knowledge/document.go`:
-
-```go
-package knowledge
-
-// The subset of a provider-recon/v1 document (providers/<slug>/latest.json)
-// the engine reads. dns_detect decodes the published JSON with its own types;
-// it never imports provider-recon's packages.
-
-const contractVersion = "provider-recon/v1"
-
-type document struct {
-	Version      string    `json:"version"`
-	Slug         string    `json:"slug"`
-	DisplayName  string    `json:"display_name"`
-	Country      string    `json:"country"`
-	ProviderKeys []string  `json:"provider_keys"`
-	Services     []service `json:"services"`
-}
-
-type service struct {
-	Key          string   `json:"service_key"`
-	ServiceTypes []string `json:"service_types"`
-	RemovedAt    string   `json:"removed_at"`
-	Evidence     struct {
-		DNSRules []dnsRule `json:"dns_rules"`
-	} `json:"evidence"`
-}
-
-type dnsRule struct {
-	RecordType    string  `json:"record_type"`
-	MatchField    string  `json:"match_field"`
-	MatcherType   string  `json:"matcher_type"`
-	Pattern       string  `json:"pattern"`
-	CaseSensitive bool    `json:"case_sensitive"`
-	Confidence    float64 `json:"confidence"`
-	Priority      int     `json:"priority"`
-	Status        string  `json:"status"`
-}
-```
-
-`internal/knowledge/knowledge.go`:
+- [ ] **Step 3: Implement.** `internal/detect/knowledge/knowledge.go`:
 
 ```go
 // Package knowledge compiles provider-recon documents into the immutable index
-// every analyzer queries. Analyzers get it injected (as the Knowledge
+// the resolver's analyzers query. Analyzers get it injected (as the Knowledge
 // interface) and never load anything themselves, so each can be tested with a
-// small hand-built index.
+// fake. Patterns go through provider-recon's matcher, so the definitions
+// validator and the resolver share one implementation of rule semantics.
 package knowledge
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"path"
-	"regexp"
 	"slices"
 	"strings"
+
+	"provider_recon/internal/matcher"
+	"provider_recon/internal/model"
 )
 
 // Kind names what a rule is matched against: a record type plus a field.
@@ -827,8 +617,7 @@ type ProviderService struct {
 	Types []string
 }
 
-// FirstService is the provider's first live service of serviceType, in
-// document order, or "" when it has none.
+// FirstService is the provider's first live service of serviceType, or "".
 func (p Provider) FirstService(serviceType string) string {
 	for _, s := range p.Services {
 		if slices.Contains(s.Types, serviceType) {
@@ -846,15 +635,20 @@ type Knowledge interface {
 	// ProviderForKey returns the provider owning a registrable domain, by an
 	// exact provider key or a glob key such as "awsdns-*".
 	ProviderForKey(key string) (Provider, bool)
-	// Version identifies the documents the index was built from.
+	// Version identifies the provider content the index was built from.
 	Version() string
 }
 
 type compiledRule struct {
 	Match
-	matches  func(string) bool
+	pattern  matcher.Pattern
 	priority int
-	caseSens bool
+}
+
+type globKey struct {
+	pattern  matcher.Pattern
+	raw      string
+	provider *Provider
 }
 
 // Index is the compiled Knowledge.
@@ -865,29 +659,26 @@ type Index struct {
 	version   string
 }
 
-type globKey struct {
-	pattern  string
-	provider *Provider
-}
-
 var _ Knowledge = (*Index)(nil)
 
-// Compile builds the index from provider-recon documents (raw JSON, one per
-// provider). It fails on a document of another contract version, a rule of an
-// unknown kind or matcher, or an invalid regex.
-func Compile(raw [][]byte) (*Index, error) {
+// Compile builds the index. It fails on a document of another contract
+// version, a rule of an unknown kind, an invalid pattern, or a provider key
+// claimed by two providers. Removed rules and services are skipped.
+//
+// The version hashes each document's content hash (which excludes collection
+// timestamps), so it changes only when provider content changes.
+func Compile(docs []model.Document) (*Index, error) {
 	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}}
-	sums := make([]string, 0, len(raw))
-	for _, b := range raw {
-		sum := sha256.Sum256(b)
-		sums = append(sums, hex.EncodeToString(sum[:]))
-		var d document
-		if err := json.Unmarshal(b, &d); err != nil {
-			return nil, fmt.Errorf("decode provider document: %w", err)
+	hashes := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if d.Version != model.ContractVersion {
+			return nil, fmt.Errorf("provider %q: contract %q, want %q", d.Slug, d.Version, model.ContractVersion)
 		}
-		if d.Version != contractVersion {
-			return nil, fmt.Errorf("provider %q: contract %q, want %q", d.Slug, d.Version, contractVersion)
+		h, err := model.ContentHash(d)
+		if err != nil {
+			return nil, fmt.Errorf("provider %q: %w", d.Slug, err)
 		}
+		hashes = append(hashes, d.Slug+"="+h)
 		if err := idx.add(d); err != nil {
 			return nil, err
 		}
@@ -895,14 +686,14 @@ func Compile(raw [][]byte) (*Index, error) {
 	for kind := range idx.rules {
 		slices.SortFunc(idx.rules[kind], func(a, b compiledRule) int { return strings.Compare(a.RuleID, b.RuleID) })
 	}
-	slices.SortFunc(idx.globKeys, func(a, b globKey) int { return strings.Compare(a.pattern, b.pattern) })
-	slices.Sort(sums)
-	all := sha256.Sum256([]byte(strings.Join(sums, "\n")))
-	idx.version = "sha256:" + hex.EncodeToString(all[:])
+	slices.SortFunc(idx.globKeys, func(a, b globKey) int { return strings.Compare(a.raw, b.raw) })
+	slices.Sort(hashes)
+	sum := sha256.Sum256([]byte(strings.Join(hashes, "\n")))
+	idx.version = "sha256:" + hex.EncodeToString(sum[:])
 	return idx, nil
 }
 
-func (idx *Index) add(d document) error {
+func (idx *Index) add(d model.Document) error {
 	p := &Provider{Slug: d.Slug, Name: d.DisplayName, Country: d.Country}
 	for _, s := range d.Services {
 		if s.RemovedAt != "" {
@@ -910,7 +701,7 @@ func (idx *Index) add(d document) error {
 		}
 		p.Services = append(p.Services, ProviderService{Key: s.Key, Types: s.ServiceTypes})
 		for _, r := range s.Evidence.DNSRules {
-			if r.Status == "removed" {
+			if r.Status == model.StatusRemoved {
 				continue
 			}
 			kind := Kind{strings.ToUpper(r.RecordType), strings.ToLower(r.MatchField)}
@@ -918,25 +709,25 @@ func (idx *Index) add(d document) error {
 				return fmt.Errorf("provider %q service %q: unsupported rule kind %s", d.Slug, s.Key, kind)
 			}
 			id := fmt.Sprintf("%s/%s/%s %s %s", d.Slug, s.Key, kind, r.MatcherType, r.Pattern)
-			fn, err := matcher(r)
+			pat, err := matcher.Compile(r.MatcherType, r.Pattern, r.CaseSensitive)
 			if err != nil {
 				return fmt.Errorf("rule %s: %w", id, err)
 			}
 			idx.rules[kind] = append(idx.rules[kind], compiledRule{
 				Match:    Match{ProviderSlug: d.Slug, ServiceKey: s.Key, ServiceTypes: s.ServiceTypes, RuleID: id, Confidence: r.Confidence},
-				matches:  fn,
+				pattern:  pat,
 				priority: r.Priority,
-				caseSens: r.CaseSensitive,
 			})
 		}
 	}
 	for _, k := range d.ProviderKeys {
-		k = strings.ToLower(k)
+		k = strings.ToLower(strings.TrimSpace(k))
 		if strings.Contains(k, "*") {
-			if _, err := path.Match(k, ""); err != nil {
-				return fmt.Errorf("provider %q: bad key pattern %q", d.Slug, k)
+			pat, err := matcher.Compile("glob", k, false)
+			if err != nil {
+				return fmt.Errorf("provider %q: key %q: %w", d.Slug, k, err)
 			}
-			idx.globKeys = append(idx.globKeys, globKey{pattern: k, provider: p})
+			idx.globKeys = append(idx.globKeys, globKey{pattern: pat, raw: k, provider: p})
 			continue
 		}
 		if other, dup := idx.exactKeys[k]; dup && other.Slug != d.Slug {
@@ -947,47 +738,12 @@ func (idx *Index) add(d document) error {
 	return nil
 }
 
-func matcher(r dnsRule) (func(string) bool, error) {
-	pattern := r.Pattern
-	if !r.CaseSensitive {
-		pattern = strings.ToLower(pattern)
-	}
-	switch r.MatcherType {
-	case "exact":
-		return func(s string) bool { return s == pattern }, nil
-	case "suffix":
-		return func(s string) bool { return s == pattern || strings.HasSuffix(s, "."+pattern) }, nil
-	case "prefix":
-		return func(s string) bool { return strings.HasPrefix(s, pattern) }, nil
-	case "contains":
-		return func(s string) bool { return strings.Contains(s, pattern) }, nil
-	case "exists":
-		return func(s string) bool { return s != "" }, nil
-	case "regex":
-		expr := r.Pattern
-		if !r.CaseSensitive {
-			expr = "(?i)" + expr
-		}
-		re, err := regexp.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid regex %q: %w", r.Pattern, err)
-		}
-		return re.MatchString, nil
-	}
-	return nil, fmt.Errorf("unsupported matcher %q", r.MatcherType)
-}
-
 // Match implements Knowledge.
 func (idx *Index) Match(kind Kind, subject string) (Match, bool) {
 	var best *compiledRule
-	lower := strings.ToLower(subject)
 	for i := range idx.rules[kind] {
 		r := &idx.rules[kind][i]
-		s := lower
-		if r.caseSens {
-			s = subject
-		}
-		if !r.matches(s) {
+		if !r.pattern.Match(subject) {
 			continue
 		}
 		if best == nil || r.priority > best.priority || (r.priority == best.priority && r.Confidence > best.Confidence) {
@@ -1007,7 +763,7 @@ func (idx *Index) ProviderForKey(key string) (Provider, bool) {
 		return *p, true
 	}
 	for _, g := range idx.globKeys {
-		if ok, _ := path.Match(g.pattern, key); ok {
+		if g.pattern.Match(key) {
 			return *g.provider, true
 		}
 	}
@@ -1018,21 +774,24 @@ func (idx *Index) ProviderForKey(key string) (Provider, bool) {
 func (idx *Index) Version() string { return idx.version }
 ```
 
-`internal/knowledge/load.go`:
+`internal/detect/knowledge/load.go`:
 
 ```go
 package knowledge
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+
+	"provider_recon/internal/model"
 )
 
-// LoadDir compiles every *.json provider document in dir (the layout of a
-// local copy of the provider-recon bucket's providers/<slug>/latest.json
-// files flattened to <slug>.json, and of the test fixtures).
+// LoadDir compiles every *.json provider document in dir: a local copy of the
+// bucket's providers/<slug>/latest.json files flattened to <slug>.json, and
+// the layout of the test fixtures.
 func LoadDir(dir string) (*Index, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
@@ -1042,62 +801,66 @@ func LoadDir(dir string) (*Index, error) {
 		return nil, fmt.Errorf("no provider documents in %s", dir)
 	}
 	sort.Strings(paths)
-	raw := make([][]byte, 0, len(paths))
+	docs := make([]model.Document, 0, len(paths))
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return nil, err
 		}
-		raw = append(raw, b)
+		var d model.Document
+		if err := json.Unmarshal(b, &d); err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Base(p), err)
+		}
+		docs = append(docs, d)
 	}
-	return Compile(raw)
+	return Compile(docs)
 }
 ```
 
 - [ ] **Step 4: Run.**
 
 Run: `go test -race ./... && go vet ./... && test -z "$(gofmt -l .)"`
-Expected: PASS (knowledge: 6 tests).
+Expected: PASS (knowledge: 7 tests).
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add services/dns_detect/internal/knowledge
-git commit -m "feat(dns_detect): knowledge index compiled from provider-recon documents
+git add services/provider_recon/internal/detect/knowledge
+git commit -m "feat(provider_recon): detect/knowledge — index compiled from provider documents over the shared matcher
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: Host analyzers (NS, SOA, MX, CNAME) and the shared labelling
+### Task 3: Per-record resolver (NS, SOA, MX, CNAME)
 
 **Files:**
-- Create: `internal/analyze/analyze.go`, `label.go`, `host_analyzers.go`, `fake_test.go`, `host_analyzers_test.go`
+- Create: `internal/detect/resolve/types.go`, `label.go`, `analyzers.go`, `resolve.go`, `fake_test.go`, `resolve_test.go`
 
 **Interfaces:**
-- Consumes: `knowledge.Knowledge`, `knowledge.Kind` vars, `model.*`, `hosts.*`.
+- Consumes: `knowledge.Knowledge`, the `knowledge.Kind` vars, and `hosts.*`.
 - Produces:
-  - `analyze.Scope{Domain, AsOf, Records}` with `Named(name, type)` and `Apex(type)`;
-  - `analyze.Detection`, `analyze.Output{Detections, Findings}` and `analyze.Analyzer` (`Name`, `Analyze(Scope, Knowledge) Output`);
-  - `analyze.LabelHost(...)`, with the constants `KeyMatchConfidence`, `SelfHostedConfidence` and `UnmappedConfidence`;
-  - the analyzers `analyze.NS{}`, `SOA{}`, `MX{}` and `CNAME{}`.
+  - the types `resolve.Record`, `Result`, `Finding` and `Output{RecordID, Results, Findings}`;
+  - constants `resolve.SelfHosted`, `KeyMatchConfidence`, `SelfHostedConfidence` and `UnmappedConfidence`;
+  - `resolve.LabelHost(kb, base, kind, fallbackType, host) []Result`;
+  - `resolve.Analyzer` and the analyzers `NS{}`, `SOA{}`, `MX{}` and `CNAME{}`;
+  - `resolve.Route(Record) Analyzer`;
+  - `resolve.Resolve(Record, Knowledge) Output`.
 
-- [ ] **Step 1: Failing tests.** `internal/analyze/fake_test.go`, a fake knowledge base injected into every analyzer test:
+- [ ] **Step 1: Failing tests.** `internal/detect/resolve/fake_test.go`, the injected fake knowledge base:
 
 ```go
-package analyze
+package resolve
 
 import (
 	"reflect"
 	"testing"
 
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
+	"provider_recon/internal/detect/knowledge"
 )
 
-// fakeKB is an injected knowledge base: exact subjects per kind, and
-// provider keys. It stands in for the compiled index in analyzer tests.
+// fakeKB is injected knowledge: exact subjects per kind, and provider keys.
 type fakeKB struct {
 	rules map[knowledge.Kind]map[string]knowledge.Match
 	keys  map[string]knowledge.Provider
@@ -1124,7 +887,7 @@ var kb = fakeKB{
 			"aspmx.l.google.com": {ProviderSlug: "google", ServiceKey: "google.workspace-mail", ServiceTypes: []string{"email"}, RuleID: "google/mx", Confidence: 1},
 		},
 		knowledge.CNAMETarget: {
-			"atc.spotify.map.fastly.net": {ProviderSlug: "fastly", ServiceKey: "fastly.edge", ServiceTypes: []string{"cdn", "ddos_protection"}, RuleID: "fastly/cname", Confidence: 1},
+			"example.se.cdn.cloudflare.net": {ProviderSlug: "cloudflare", ServiceKey: "cloudflare.edge", ServiceTypes: []string{"cdn", "ddos_protection", "waf"}, RuleID: "cloudflare/cname", Confidence: 1},
 		},
 	},
 	keys: map[string]knowledge.Provider{
@@ -1132,605 +895,419 @@ var kb = fakeKB{
 	},
 }
 
-func rec(name, typ, value string) model.Record {
-	return model.Record{Name: name, Type: typ, Value: value}
+func rec(name, typ, value string) Record {
+	return Record{RecordID: "r1", RootDomain: "example.se", Name: name, Type: typ, Value: value, FirstSeen: "2026-08-10", LastSeen: "2026-09-19"}
 }
 
-func scope(domain string, recs ...model.Record) Scope { return Scope{Domain: domain, Records: recs} }
-
-// short renders detections as "type provider_key slug service_key value confidence" for compact assertions.
-func short(ds []Detection) [][]any {
+// short renders results as [service_type provider_key provider_slug service_key subject confidence fallback].
+func short(rs []Result) [][]any {
 	out := [][]any{}
-	for _, d := range ds {
-		out = append(out, []any{d.ServiceType, d.ProviderKey, d.ProviderSlug, d.ServiceKey, d.Evidence.Value, d.Evidence.Confidence})
+	for _, r := range rs {
+		out = append(out, []any{r.ServiceType, r.ProviderKey, r.ProviderSlug, r.ServiceKey, r.Subject, r.Confidence, r.Fallback})
 	}
 	return out
 }
 
-func assertDetections(t *testing.T, got []Detection, want [][]any) {
+func assertResults(t *testing.T, got []Result, want [][]any) {
 	t.Helper()
 	if g := short(got); !reflect.DeepEqual(g, want) {
-		t.Fatalf("detections\n got %v\nwant %v", g, want)
+		t.Fatalf("results\n got %v\nwant %v", g, want)
 	}
 }
 ```
 
-`internal/analyze/host_analyzers_test.go`:
+`internal/detect/resolve/resolve_test.go`:
 
 ```go
-package analyze
+package resolve
 
 import (
+	"encoding/json"
 	"testing"
-
-	"dns_detect/internal/model"
 )
 
-func TestNSRuleKeyFallbackSelfHostedAndUnmapped(t *testing.T) {
-	out := NS{}.Analyze(scope("example.se",
-		rec("example.se", "NS", "ABBY.ns.cloudflare.com."),
-		rec("example.se", "NS", "ns1.binero.se."),
-		rec("example.se", "NS", "ns1.example.se."),
-		rec("example.se", "NS", "dns1.p07.nsone.net."),
-		rec("example.se", "NS", "192.0.2.53"),
-		rec("sub.example.se", "NS", "ns.elsewhere.net."),
-	), kb)
-	assertDetections(t, out.Detections, [][]any{
-		{"dns", "cloudflare", "cloudflare", "cloudflare.dns", "abby.ns.cloudflare.com", 1.0},
-		{"dns", "binero", "binero", "binero.dns", "ns1.binero.se", KeyMatchConfidence},
-		{"dns", model.SelfHosted, "", "", "ns1.example.se", SelfHostedConfidence},
-		{"dns", "nsone.net", "", "", "dns1.p07.nsone.net", UnmappedConfidence},
-	})
-	if out.Detections[0].Evidence.RuleID != "cloudflare/ns" || out.Detections[0].Evidence.Analyzer != "ns" {
-		t.Fatalf("evidence = %+v", out.Detections[0].Evidence)
+func TestNSRuleProviderKeySelfHostedUnmappedAndIP(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  [][]any
+	}{
+		{"ABBY.ns.cloudflare.com.", [][]any{{"dns", "cloudflare", "cloudflare", "cloudflare.dns", "abby.ns.cloudflare.com", 1.0, false}}},
+		{"ns1.binero.se.", [][]any{{"dns", "binero", "binero", "binero.dns", "ns1.binero.se", KeyMatchConfidence, false}}},
+		{"ns1.example.se.", [][]any{{"dns", SelfHosted, "", "", "ns1.example.se", SelfHostedConfidence, false}}},
+		{"dns1.p07.nsone.net.", [][]any{{"dns", "nsone.net", "", "", "dns1.p07.nsone.net", UnmappedConfidence, false}}},
+		{"192.0.2.53", [][]any{}},
+		{".", [][]any{}},
+	} {
+		t.Run(c.value, func(t *testing.T) {
+			assertResults(t, Resolve(rec("example.se", "NS", c.value), kb).Results, c.want)
+		})
 	}
 }
 
-func TestSOAOnlyWithoutNS(t *testing.T) {
-	soa := rec("example.se", "SOA", "ns1.binero.se. hostmaster.binero.se. 1 2 3 4 5")
-	assertDetections(t, SOA{}.Analyze(scope("example.se", soa), kb).Detections, [][]any{
-		{"dns", "binero", "binero", "binero.dns", "ns1.binero.se", KeyMatchConfidence},
-	})
-	withNS := scope("example.se", soa, rec("example.se", "NS", "abby.ns.cloudflare.com."))
-	got := SOA{}.Analyze(withNS, kb).Detections
-	if len(got) != 0 {
-		t.Fatalf("SOA used although NS exists: %v", short(got))
+func TestSOAIsFallbackEvidence(t *testing.T) {
+	out := Resolve(rec("example.se.", "SOA", "ns1.binero.se. hostmaster.binero.se. 1 2 3 4 5"), kb)
+	assertResults(t, out.Results, [][]any{{"dns", "binero", "binero", "binero.dns", "ns1.binero.se", KeyMatchConfidence, true}})
+	if out.Results[0].Analyzer != "soa" {
+		t.Fatalf("analyzer = %q", out.Results[0].Analyzer)
 	}
 }
 
-func TestMXHostsNullMXAndPlaceholders(t *testing.T) {
-	out := MX{}.Analyze(scope("example.se",
-		rec("example.se", "MX", "1 ASPMX.L.GOOGLE.COM."),
-		rec("example.se", "MX", "10 mail.example.se."),
-		rec("example.se", "MX", "0 ."),
-		rec("example.se", "MX", "10 localhost."),
-	), kb)
-	assertDetections(t, out.Detections, [][]any{
-		{"email", "google", "google", "google.workspace-mail", "aspmx.l.google.com", 1.0},
-		{"email", model.SelfHosted, "", "", "mail.example.se", SelfHostedConfidence},
-	})
-	if len(out.Findings) != 1 || out.Findings[0].Code != "null_mx" {
-		t.Fatalf("findings = %+v", out.Findings)
-	}
-}
-
-func TestCNAMEApexAndWwwOnly(t *testing.T) {
-	out := CNAME{}.Analyze(scope("spotify.com",
-		rec("www.spotify.com", "CNAME", "atc.spotify.map.fastly.net."),
-		rec("shop.spotify.com", "CNAME", "shops.myshopify.com."),
-		rec("spotify.com", "CNAME", "spotify.github.io."),
-	), kb)
-	assertDetections(t, out.Detections, [][]any{
-		{"hosting", "spotify.github.io", "", "", "spotify.github.io", UnmappedConfidence},
-		{"cdn", "fastly", "fastly", "fastly.edge", "atc.spotify.map.fastly.net", 1.0},
-		{"ddos_protection", "fastly", "fastly", "fastly.edge", "atc.spotify.map.fastly.net", 1.0},
-	})
-}
-
-func TestKeyMatchWithoutServiceOfThatType(t *testing.T) {
-	out := MX{}.Analyze(scope("example.se", rec("example.se", "MX", "10 mx.binero.se.")), kb)
+func TestMXHostNullMXAndPlaceholders(t *testing.T) {
+	assertResults(t, Resolve(rec("example.se", "MX", "1 ASPMX.L.GOOGLE.COM."), kb).Results,
+		[][]any{{"email", "google", "google", "google.workspace-mail", "aspmx.l.google.com", 1.0, false}})
+	assertResults(t, Resolve(rec("example.se", "MX", "10 mail.example.se."), kb).Results,
+		[][]any{{"email", SelfHosted, "", "", "mail.example.se", SelfHostedConfidence, false}})
 	// Binero is known but has no email service: named provider, empty service key.
-	assertDetections(t, out.Detections, [][]any{{"email", "binero", "binero", "", "mx.binero.se", KeyMatchConfidence}})
-}
-```
-
-Run: `go test ./internal/analyze/`
-Expected: FAIL (undefined: `Scope`, `Detection`, `NS`, …).
-
-- [ ] **Step 2: Implement.** `internal/analyze/analyze.go`:
-
-```go
-// Package analyze holds one analyzer per record type or protocol. Every
-// analyzer is a pure function of the domain's records (already narrowed to the
-// evaluation date by the engine) and the injected knowledge.
-package analyze
-
-import (
-	"strings"
-
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
-)
-
-// Scope is what an analyzer sees: the domain and its records at AsOf, with
-// names normalised (lower case, no trailing dot) and types upper-cased.
-type Scope struct {
-	Domain  string
-	AsOf    string
-	Records []model.Record
+	assertResults(t, Resolve(rec("example.se", "MX", "10 mx.binero.se."), kb).Results,
+		[][]any{{"email", "binero", "binero", "", "mx.binero.se", KeyMatchConfidence, false}})
+	null := Resolve(rec("example.se", "MX", "0 ."), kb)
+	if len(null.Results) != 0 || len(null.Findings) != 1 || null.Findings[0].Code != "null_mx" || null.Findings[0].RecordID != "r1" {
+		t.Fatalf("null MX = %+v", null)
+	}
+	if out := Resolve(rec("example.se", "MX", "10 localhost."), kb); len(out.Results)+len(out.Findings) != 0 {
+		t.Fatalf("localhost MX = %+v", out)
+	}
 }
 
-// Named returns the records of recordType at name.
-func (s Scope) Named(name, recordType string) []model.Record {
-	var out []model.Record
-	for _, r := range s.Records {
-		if r.Name == name && r.Type == recordType {
-			out = append(out, r)
+func TestCNAMEEdgeGivesOneResultPerServiceType(t *testing.T) {
+	assertResults(t, Resolve(rec("www.example.se", "CNAME", "example.se.cdn.cloudflare.net."), kb).Results, [][]any{
+		{"cdn", "cloudflare", "cloudflare", "cloudflare.edge", "example.se.cdn.cloudflare.net", 1.0, false},
+		{"ddos_protection", "cloudflare", "cloudflare", "cloudflare.edge", "example.se.cdn.cloudflare.net", 1.0, false},
+		{"waf", "cloudflare", "cloudflare", "cloudflare.edge", "example.se.cdn.cloudflare.net", 1.0, false},
+	})
+	assertResults(t, Resolve(rec("example.se", "CNAME", "example.github.io."), kb).Results,
+		[][]any{{"hosting", "example.github.io", "", "", "example.github.io", UnmappedConfidence, false}})
+}
+
+func TestRoutingIgnoresRecordsNoAnalyzerHandles(t *testing.T) {
+	for _, r := range []Record{
+		rec("sub.example.se", "NS", "ns.elsewhere.net."),
+		rec("shop.example.se", "CNAME", "shops.myshopify.com."),
+		rec("www.example.se", "MX", "10 mx.elsewhere.net."),
+		rec("example.se", "TXT", `"v=spf1 include:_spf.google.com ~all"`),
+		rec("example.se", "A", "192.0.2.1"),
+	} {
+		if out := Resolve(r, kb); len(out.Results)+len(out.Findings) != 0 {
+			t.Errorf("%s %s routed: %+v", r.Name, r.Type, out)
 		}
 	}
-	return out
 }
 
-// Apex returns the records of recordType at the domain itself.
-func (s Scope) Apex(recordType string) []model.Record { return s.Named(s.Domain, recordType) }
-
-// Detection is one service an analyzer found, with the evidence for it.
-type Detection struct {
-	ServiceType  string
-	ProviderKey  string
-	ProviderSlug string
-	ServiceKey   string
-	Evidence     model.Evidence
+func TestResultsCarryTheRecordAndItsWindow(t *testing.T) {
+	r := Record{RecordID: "abc", RootDomain: "Example.SE.", Name: "EXAMPLE.se.", Type: "ns", Value: "ns1.binero.se.",
+		FirstSeen: "2026-08-10 00:00:00.000", LastSeen: "2026-09-19"}
+	got := Resolve(r, kb).Results
+	if len(got) != 1 {
+		t.Fatalf("results = %+v", got)
+	}
+	g := got[0]
+	if g.RecordID != "abc" || g.RootDomain != "example.se" || g.RecordName != "example.se" || g.RecordType != "NS" ||
+		g.Analyzer != "ns" || g.ValidFrom != "2026-08-10" || g.ValidTo != "2026-09-19" {
+		t.Fatalf("result = %+v", g)
+	}
 }
 
-// Output is an analyzer's answer.
-type Output struct {
-	Detections []Detection
-	Findings   []model.Finding
+func TestResolveIsDeterministicAndSerialisesEmptyLists(t *testing.T) {
+	r := rec("www.example.se", "CNAME", "example.se.cdn.cloudflare.net.")
+	first, _ := json.Marshal(Resolve(r, kb))
+	for range 20 {
+		again, _ := json.Marshal(Resolve(r, kb))
+		if string(again) != string(first) {
+			t.Fatalf("output changed:\n%s\n%s", again, first)
+		}
+	}
+	empty, _ := json.Marshal(Resolve(rec("example.se", "A", "192.0.2.1"), kb))
+	if string(empty) != `{"record_id":"r1","results":[],"findings":[]}` {
+		t.Fatalf("empty output = %s", empty)
+	}
 }
-
-// Analyzer is implemented by every record-type analyzer.
-type Analyzer interface {
-	Name() string
-	Analyze(s Scope, kb knowledge.Knowledge) Output
-}
-
-func fields(value string) []string { return strings.Fields(value) }
 ```
 
-`internal/analyze/label.go`:
+Run: `go test ./internal/detect/resolve/`
+Expected: FAIL (undefined: `Record`, `Resolve`, …).
+
+- [ ] **Step 2: Implement.** `internal/detect/resolve/types.go`:
 
 ```go
-package analyze
+// Package resolve turns one DNS record into the services it proves. Every
+// record is resolved on its own, against injected knowledge: a pure function
+// of (record, knowledge). A domain's history is a view over the per-record
+// results (spec: docs/superpowers/specs/2026-09-28-dns-detect-service-design.md).
+package resolve
 
-import (
-	"dns_detect/internal/hosts"
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
-)
+// Record is one DNS record instance as the DNS store keeps it: presentation
+// type and RDATA, and the window it was seen in (YYYY-MM-DD; empty = open).
+type Record struct {
+	RecordID   string `json:"record_id"`
+	RootDomain string `json:"root_domain"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Value      string `json:"value"`
+	FirstSeen  string `json:"first_seen,omitempty"`
+	LastSeen   string `json:"last_seen,omitempty"`
+}
 
-// Confidence of a detection that no provider-recon rule produced.
+// Result is one service a record proves. ProviderKey is the provider-recon
+// slug for a named provider, the registrable domain for an unmapped one, and
+// SelfHosted when the evidence points at the domain itself. Fallback results
+// count only where no better evidence of the same service type covers the
+// same time (SOA MNAME versus NS); the history view applies that.
+type Result struct {
+	RecordID     string  `json:"record_id"`
+	RootDomain   string  `json:"root_domain"`
+	RecordName   string  `json:"record_name"`
+	RecordType   string  `json:"record_type"`
+	Analyzer     string  `json:"analyzer"`
+	Subject      string  `json:"subject"`
+	ServiceType  string  `json:"service_type"`
+	ProviderKey  string  `json:"provider_key"`
+	ProviderSlug string  `json:"provider_slug"`
+	ServiceKey   string  `json:"service_key"`
+	RuleID       string  `json:"rule_id"`
+	Confidence   float64 `json:"confidence"`
+	Fallback     bool    `json:"fallback"`
+	ValidFrom    string  `json:"valid_from"`
+	ValidTo      string  `json:"valid_to"`
+}
+
+// Finding is an observation about a record that is not a service.
+type Finding struct {
+	RecordID string `json:"record_id"`
+	Analyzer string `json:"analyzer"`
+	Code     string `json:"code"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// Output is everything one record resolves to.
+type Output struct {
+	RecordID string    `json:"record_id"`
+	Results  []Result  `json:"results"`
+	Findings []Finding `json:"findings"`
+}
+
+// SelfHosted is the provider key of evidence that points at the domain itself.
+const SelfHosted = "self-hosted"
+
+// Confidence of a result that no provider-recon rule produced.
 const (
 	KeyMatchConfidence   = 0.8
 	SelfHostedConfidence = 0.8
 	UnmappedConfidence   = 0.5
 )
+```
 
-// LabelHost labels one host named by a record. The best rule of kind wins,
-// giving one detection per service type of the matched service. Without a
-// rule the host's registrable domain decides: the domain itself (or a host
-// under it) is self-hosted, a provider key names that provider (with its first
-// service of fallbackType), anything else is kept as an unmapped key. A host
-// with no registrable domain (an IP, garbage) yields nothing.
-func LabelHost(s Scope, kb knowledge.Knowledge, analyzer string, kind knowledge.Kind, fallbackType string, rec model.Record, host string) []Detection {
+`internal/detect/resolve/label.go`:
+
+```go
+package resolve
+
+import (
+	"provider_recon/internal/detect/hosts"
+	"provider_recon/internal/detect/knowledge"
+)
+
+// LabelHost labels one host a record names. The best rule of kind wins,
+// giving one result per service type of the matched service. Without a rule
+// the host's registrable domain decides: the domain itself (or a host under
+// it) is self-hosted; a provider key names that provider, with its first
+// service of fallbackType; anything else is kept as an unmapped key. A host
+// with no registrable domain (an IP literal, garbage) yields nothing.
+//
+// base carries the record fields and window; LabelHost fills in the rest.
+func LabelHost(kb knowledge.Knowledge, base Result, kind knowledge.Kind, fallbackType, host string) []Result {
 	host = hosts.Normalize(host)
 	if host == "" {
 		return nil
 	}
-	ev := model.Evidence{Analyzer: analyzer, RecordName: rec.Name, RecordType: rec.Type, Value: host}
+	base.Subject = host
 	if m, ok := kb.Match(kind, host); ok {
-		ev.RuleID, ev.Confidence = m.RuleID, m.Confidence
-		out := make([]Detection, 0, len(m.ServiceTypes))
+		out := make([]Result, 0, len(m.ServiceTypes))
 		for _, t := range m.ServiceTypes {
-			out = append(out, Detection{ServiceType: t, ProviderKey: m.ProviderSlug, ProviderSlug: m.ProviderSlug, ServiceKey: m.ServiceKey, Evidence: ev})
+			r := base
+			r.ServiceType, r.ProviderKey, r.ProviderSlug, r.ServiceKey = t, m.ProviderSlug, m.ProviderSlug, m.ServiceKey
+			r.RuleID, r.Confidence = m.RuleID, m.Confidence
+			out = append(out, r)
 		}
 		return out
 	}
-	if hosts.Under(host, s.Domain) {
-		ev.Confidence = SelfHostedConfidence
-		return []Detection{{ServiceType: fallbackType, ProviderKey: model.SelfHosted, Evidence: ev}}
-	}
+	r := base
+	r.ServiceType = fallbackType
 	key := hosts.Registrable(host)
-	if key == "" {
+	switch {
+	case hosts.Under(host, base.RootDomain) || (key != "" && key == base.RootDomain):
+		r.ProviderKey, r.Confidence = SelfHosted, SelfHostedConfidence
+	case key == "":
 		return nil
+	default:
+		if p, ok := kb.ProviderForKey(key); ok {
+			r.ProviderKey, r.ProviderSlug, r.ServiceKey, r.Confidence = p.Slug, p.Slug, p.FirstService(fallbackType), KeyMatchConfidence
+		} else {
+			r.ProviderKey, r.Confidence = key, UnmappedConfidence
+		}
 	}
-	if key == s.Domain {
-		ev.Confidence = SelfHostedConfidence
-		return []Detection{{ServiceType: fallbackType, ProviderKey: model.SelfHosted, Evidence: ev}}
-	}
-	if p, ok := kb.ProviderForKey(key); ok {
-		ev.Confidence = KeyMatchConfidence
-		return []Detection{{ServiceType: fallbackType, ProviderKey: p.Slug, ProviderSlug: p.Slug, ServiceKey: p.FirstService(fallbackType), Evidence: ev}}
-	}
-	ev.Confidence = UnmappedConfidence
-	return []Detection{{ServiceType: fallbackType, ProviderKey: key, Evidence: ev}}
+	return []Result{r}
 }
 ```
 
-`internal/analyze/host_analyzers.go`:
+`internal/detect/resolve/analyzers.go`:
 
 ```go
-package analyze
+package resolve
 
 import (
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
+	"strings"
+
+	"provider_recon/internal/detect/knowledge"
 )
 
-// NS labels the apex nameservers: service type dns.
+// Analyzer resolves the records routed to it. base is the result template for
+// the record (record fields and window already set).
+type Analyzer interface {
+	Name() string
+	Analyze(rec Record, base Result, kb knowledge.Knowledge) Output
+}
+
+// NS labels an apex nameserver: service type dns.
 type NS struct{}
 
 func (NS) Name() string { return "ns" }
 
-func (a NS) Analyze(s Scope, kb knowledge.Knowledge) Output {
-	var out Output
-	for _, r := range s.Apex("NS") {
-		out.Detections = append(out.Detections, LabelHost(s, kb, a.Name(), knowledge.NSTarget, "dns", r, r.Value)...)
-	}
-	return out
+func (NS) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	return Output{Results: LabelHost(kb, base, knowledge.NSTarget, "dns", rec.Value)}
 }
 
-// SOA labels the SOA primary nameserver (MNAME), only for a domain without
-// apex NS records: NS is the better evidence whenever it exists.
+// SOA labels the SOA primary nameserver (MNAME) with NS rules. Its results
+// are fallback: NS is the better evidence wherever it covers the same time.
 type SOA struct{}
 
 func (SOA) Name() string { return "soa" }
 
-func (a SOA) Analyze(s Scope, kb knowledge.Knowledge) Output {
-	var out Output
-	if len(s.Apex("NS")) > 0 {
-		return out
+func (SOA) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	f := strings.Fields(rec.Value)
+	if len(f) == 0 {
+		return Output{}
 	}
-	for _, r := range s.Apex("SOA") {
-		f := fields(r.Value)
-		if len(f) == 0 {
-			continue
-		}
-		out.Detections = append(out.Detections, LabelHost(s, kb, a.Name(), knowledge.NSTarget, "dns", r, f[0])...)
-	}
-	return out
+	base.Fallback = true
+	return Output{Results: LabelHost(kb, base, knowledge.NSTarget, "dns", f[0])}
 }
 
-// MX labels the apex mail exchangers: service type email. A null MX
-// ("0 ." per RFC 7505) is a finding, not a provider.
+// MX labels an apex mail exchanger: service type email. A null MX ("0 .",
+// RFC 7505) is a finding, not a provider; localhost placeholders are ignored.
 type MX struct{}
 
 func (MX) Name() string { return "mx" }
 
-func (a MX) Analyze(s Scope, kb knowledge.Knowledge) Output {
-	var out Output
-	for _, r := range s.Apex("MX") {
-		f := fields(r.Value)
-		if len(f) == 0 {
-			continue
-		}
-		host := f[len(f)-1]
-		if host == "." || host == "" {
-			out.Findings = append(out.Findings, model.Finding{Analyzer: a.Name(), Code: "null_mx", Detail: "the domain accepts no mail"})
-			continue
-		}
-		if host == "localhost" || host == "localhost." || host == "~" {
-			continue
-		}
-		out.Detections = append(out.Detections, LabelHost(s, kb, a.Name(), knowledge.MXTarget, "email", r, host)...)
+func (a MX) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	f := strings.Fields(rec.Value)
+	if len(f) == 0 {
+		return Output{}
 	}
-	return out
+	host := strings.ToLower(f[len(f)-1])
+	switch host {
+	case ".":
+		return Output{Findings: []Finding{{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "null_mx", Detail: "the domain accepts no mail"}}}
+	case "localhost", "localhost.", "~":
+		return Output{}
+	}
+	return Output{Results: LabelHost(kb, base, knowledge.MXTarget, "email", host)}
 }
 
-// CNAME labels apex and www CNAME targets: service type hosting unless a
+// CNAME labels an apex or www CNAME target: service type hosting unless a
 // rule says otherwise (a CDN edge, a PaaS).
 type CNAME struct{}
 
 func (CNAME) Name() string { return "cname" }
 
-func (a CNAME) Analyze(s Scope, kb knowledge.Knowledge) Output {
-	var out Output
-	for _, name := range []string{s.Domain, "www." + s.Domain} {
-		for _, r := range s.Named(name, "CNAME") {
-			out.Detections = append(out.Detections, LabelHost(s, kb, a.Name(), knowledge.CNAMETarget, "hosting", r, r.Value)...)
-		}
-	}
-	return out
+func (CNAME) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	return Output{Results: LabelHost(kb, base, knowledge.CNAMETarget, "hosting", rec.Value)}
 }
 ```
 
-- [ ] **Step 3: Run.**
-
-Run: `go test -race ./... && go vet ./... && test -z "$(gofmt -l .)"`
-Expected: PASS (analyze: 5 tests).
-
-- [ ] **Step 4: Commit.**
-
-```bash
-git add services/dns_detect/internal/analyze
-git commit -m "feat(dns_detect): NS, SOA, MX and CNAME analyzers with rule, provider-key and self-hosted labelling
-
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-### Task 4: Engine
-
-**Files:**
-- Create: `internal/engine/engine.go`, `internal/engine/engine_test.go`
-
-**Interfaces:**
-- Consumes: Tasks 1–3.
-- Produces: `engine.New(kb, analyzers...)`, `engine.Default(kb)` and `(*Engine).Detect(model.Input, asOf string) model.Result`.
-
-- [ ] **Step 1: Failing test.** `internal/engine/engine_test.go`:
+`internal/detect/resolve/resolve.go`:
 
 ```go
-package engine
-
-import (
-	"encoding/json"
-	"math/rand/v2"
-	"reflect"
-	"testing"
-
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
-)
-
-func loadKB(t *testing.T) *knowledge.Index {
-	t.Helper()
-	kb, err := knowledge.LoadDir("../knowledge/testdata/providers")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return kb
-}
-
-func r(name, typ, value, first, last string) model.Record {
-	return model.Record{Name: name, Type: typ, Value: value, FirstSeen: first, LastSeen: last}
-}
-
-var example = model.Input{Domain: "Example.SE.", Records: []model.Record{
-	r("example.se.", "NS", "ns1.loopia.se.", "2026-02-02", "2026-09-25"),
-	r("example.se.", "NS", "ns2.loopia.se.", "2026-02-02", "2026-09-25"),
-	r("example.se.", "NS", "ns51.domaincontrol.com.", "2026-01-01", "2026-02-01"),
-	r("example.se.", "MX", "10 mailcluster.loopia.se.", "2026-01-01", "2026-09-25"),
-	r("example.se.", "MX", "0 .", "2026-01-01", "2026-09-25"),
-	r("www.example.se.", "CNAME", "example.se.cdn.cloudflare.net.", "2026-01-01", "2026-09-25"),
-	r("example.se.", "SOA", "ns1.loopia.se. registry.loopia.se. 1 2 3 4 5", "2026-01-01", "2026-09-25"),
-}}
-
-func TestDetectAggregatesServicesWithEvidence(t *testing.T) {
-	got := Default(loadKB(t)).Detect(example, "2026-09-20")
-	type row struct {
-		Type, Key, Slug string
-		Keys            []string
-		Evidence        int
-	}
-	var rows []row
-	for _, s := range got.Services {
-		rows = append(rows, row{s.ServiceType, s.ProviderKey, s.ProviderSlug, s.ServiceKeys, len(s.Evidence)})
-	}
-	want := []row{
-		{"cdn", "cloudflare", "cloudflare", []string{"cloudflare.edge"}, 1},
-		{"ddos_protection", "cloudflare", "cloudflare", []string{"cloudflare.edge"}, 1},
-		{"dns", "loopia", "loopia", []string{"loopia.dns"}, 2},
-		{"email", "loopia", "loopia", []string{"loopia.email"}, 1},
-		{"waf", "cloudflare", "cloudflare", []string{"cloudflare.edge"}, 1},
-	}
-	if !reflect.DeepEqual(rows, want) {
-		t.Fatalf("services\n got %+v\nwant %+v", rows, want)
-	}
-	if got.Domain != "example.se" || got.AsOf != "2026-09-20" || got.KnowledgeVersion == "" {
-		t.Fatalf("header = %q %q %q", got.Domain, got.AsOf, got.KnowledgeVersion)
-	}
-	if len(got.Findings) != 1 || got.Findings[0].Code != "null_mx" {
-		t.Fatalf("findings = %+v", got.Findings)
-	}
-}
-
-func TestDetectAsOfSlidesThroughTime(t *testing.T) {
-	e := Default(loadKB(t))
-	dnsProviders := func(asOf string) []string {
-		var out []string
-		for _, s := range e.Detect(example, asOf).Services {
-			if s.ServiceType == "dns" {
-				out = append(out, s.ProviderKey)
-			}
-		}
-		return out
-	}
-	if got := dnsProviders("2026-01-15"); !reflect.DeepEqual(got, []string{"godaddy"}) {
-		t.Fatalf("January dns = %v, want [godaddy]", got)
-	}
-	if got := dnsProviders("2026-09-20"); !reflect.DeepEqual(got, []string{"loopia"}) {
-		t.Fatalf("September dns = %v, want [loopia]", got)
-	}
-	// After the last observation the last known state carries forward.
-	if got := dnsProviders("2027-01-01"); !reflect.DeepEqual(got, []string{"loopia"}) {
-		t.Fatalf("after the last scan dns = %v, want [loopia]", got)
-	}
-	if got := e.Detect(example, "2027-01-01").ObservedAt; got != "2026-09-25" {
-		t.Fatalf("observed_at = %q, want 2026-09-25", got)
-	}
-	if got := dnsProviders("2025-12-31"); got != nil {
-		t.Fatalf("before the first scan dns = %v, want none", got)
-	}
-}
-
-func TestDetectIsDeterministic(t *testing.T) {
-	e := Default(loadKB(t))
-	want, _ := json.Marshal(e.Detect(example, "2026-09-20"))
-	for i := range 20 {
-		shuffled := model.Input{Domain: example.Domain, Records: append([]model.Record(nil), example.Records...)}
-		rand.New(rand.NewPCG(uint64(i), 7)).Shuffle(len(shuffled.Records), func(a, b int) {
-			shuffled.Records[a], shuffled.Records[b] = shuffled.Records[b], shuffled.Records[a]
-		})
-		got, _ := json.Marshal(e.Detect(shuffled, "2026-09-20"))
-		if string(got) != string(want) {
-			t.Fatalf("shuffle %d changed the result:\n%s\n%s", i, got, want)
-		}
-	}
-}
-
-func TestDetectEmptyDomainGivesEmptyLists(t *testing.T) {
-	got, _ := json.Marshal(Default(loadKB(t)).Detect(model.Input{Domain: "nothing.se"}, ""))
-	var back map[string]any
-	_ = json.Unmarshal(got, &back)
-	if back["services"] == nil || back["findings"] == nil {
-		t.Fatalf("empty result must serialise [] not null: %s", got)
-	}
-}
-```
-
-Run: `go test ./internal/engine/`
-Expected: FAIL (undefined: `Default`).
-
-- [ ] **Step 2: Implement.** `internal/engine/engine.go`:
-
-```go
-// Package engine runs the analyzers over one domain's records at one date and
-// aggregates their detections into services with evidence. It is a pure
-// function of (records, asOf, knowledge): the same inputs give the same
-// result in the same order.
-package engine
+package resolve
 
 import (
 	"cmp"
 	"slices"
 	"strings"
 
-	"dns_detect/internal/analyze"
-	"dns_detect/internal/hosts"
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
+	"provider_recon/internal/detect/hosts"
+	"provider_recon/internal/detect/knowledge"
 )
 
-// Engine holds the knowledge and the analyzers, both fixed at construction.
-type Engine struct {
-	kb        knowledge.Knowledge
-	analyzers []analyze.Analyzer
+// Route picks the analyzer for a normalised record, or nil when no analyzer
+// handles it (spec: "Routing and analyzers").
+func Route(rec Record) Analyzer {
+	apex := rec.Name == rec.RootDomain
+	www := rec.Name == "www."+rec.RootDomain
+	switch {
+	case rec.Type == "NS" && apex:
+		return NS{}
+	case rec.Type == "SOA" && apex:
+		return SOA{}
+	case rec.Type == "MX" && apex:
+		return MX{}
+	case rec.Type == "CNAME" && (apex || www):
+		return CNAME{}
+	}
+	return nil
 }
 
-// New builds an engine over kb running analyzers in the given order.
-func New(kb knowledge.Knowledge, analyzers ...analyze.Analyzer) *Engine {
-	return &Engine{kb: kb, analyzers: analyzers}
-}
-
-// Default is the engine with every analyzer this build has.
-func Default(kb knowledge.Knowledge) *Engine {
-	return New(kb, analyze.NS{}, analyze.SOA{}, analyze.MX{}, analyze.CNAME{})
-}
-
-// Detect evaluates in as of asOf (YYYY-MM-DD): the domain's latest
-// observation at or before that date (model.Snapshot). "" uses every record.
-func (e *Engine) Detect(in model.Input, asOf string) model.Result {
-	s := analyze.Scope{Domain: hosts.Normalize(in.Domain), AsOf: asOf}
-	records, observed := model.Snapshot(in.Records, asOf)
-	for _, r := range records {
-		r.Name = hosts.Normalize(r.Name)
-		r.Type = strings.ToUpper(strings.TrimSpace(r.Type))
-		s.Records = append(s.Records, r)
+// Resolve turns one record into the services it proves. It normalises names
+// and type, routes the record, copies its window onto every result, and sorts
+// the output so the same record always gives identical output.
+func Resolve(rec Record, kb knowledge.Knowledge) Output {
+	rec.RootDomain = hosts.Normalize(rec.RootDomain)
+	rec.Name = hosts.Normalize(rec.Name)
+	rec.Type = strings.ToUpper(strings.TrimSpace(rec.Type))
+	out := Output{RecordID: rec.RecordID, Results: []Result{}, Findings: []Finding{}}
+	a := Route(rec)
+	if a == nil {
+		return out
 	}
-	var detections []analyze.Detection
-	var findings []model.Finding
-	for _, a := range e.analyzers {
-		out := a.Analyze(s, e.kb)
-		detections = append(detections, out.Detections...)
-		findings = append(findings, out.Findings...)
+	base := Result{
+		RecordID: rec.RecordID, RootDomain: rec.RootDomain, RecordName: rec.Name, RecordType: rec.Type,
+		Analyzer: a.Name(), ValidFrom: day(rec.FirstSeen), ValidTo: day(rec.LastSeen),
 	}
-	return model.Result{
-		Domain:           s.Domain,
-		AsOf:             asOf,
-		ObservedAt:       observed,
-		KnowledgeVersion: e.kb.Version(),
-		Services:         aggregate(detections),
-		Findings:         sortFindings(findings),
-	}
-}
-
-func aggregate(ds []analyze.Detection) []model.Service {
-	type key struct{ serviceType, providerKey string }
-	byKey := map[key]*model.Service{}
-	for _, d := range ds {
-		k := key{d.ServiceType, d.ProviderKey}
-		svc, ok := byKey[k]
-		if !ok {
-			svc = &model.Service{ServiceType: d.ServiceType, ProviderKey: d.ProviderKey, ServiceKeys: []string{}}
-			byKey[k] = svc
-		}
-		if svc.ProviderSlug == "" {
-			svc.ProviderSlug = d.ProviderSlug
-		}
-		if d.ServiceKey != "" && !slices.Contains(svc.ServiceKeys, d.ServiceKey) {
-			svc.ServiceKeys = append(svc.ServiceKeys, d.ServiceKey)
-		}
-		if !slices.Contains(svc.Evidence, d.Evidence) {
-			svc.Evidence = append(svc.Evidence, d.Evidence)
-		}
-		svc.Confidence = max(svc.Confidence, d.Evidence.Confidence)
-	}
-	out := make([]model.Service, 0, len(byKey))
-	for _, svc := range byKey {
-		slices.Sort(svc.ServiceKeys)
-		slices.SortFunc(svc.Evidence, func(a, b model.Evidence) int {
-			return cmp.Or(
-				cmp.Compare(a.Analyzer, b.Analyzer), cmp.Compare(a.RecordName, b.RecordName),
-				cmp.Compare(a.RecordType, b.RecordType), cmp.Compare(a.Value, b.Value), cmp.Compare(a.RuleID, b.RuleID),
-			)
-		})
-		out = append(out, *svc)
-	}
-	slices.SortFunc(out, func(a, b model.Service) int {
-		return cmp.Or(cmp.Compare(a.ServiceType, b.ServiceType), cmp.Compare(a.ProviderKey, b.ProviderKey))
+	got := a.Analyze(rec, base, kb)
+	out.Results = append(out.Results, got.Results...)
+	out.Findings = append(out.Findings, got.Findings...)
+	slices.SortFunc(out.Results, func(a, b Result) int {
+		return cmp.Or(cmp.Compare(a.ServiceType, b.ServiceType), cmp.Compare(a.ProviderKey, b.ProviderKey),
+			cmp.Compare(a.Subject, b.Subject), cmp.Compare(a.RuleID, b.RuleID))
 	})
 	return out
 }
 
-func sortFindings(fs []model.Finding) []model.Finding {
-	out := []model.Finding{}
-	for _, f := range fs {
-		if !slices.Contains(out, f) {
-			out = append(out, f)
-		}
-	}
-	slices.SortFunc(out, func(a, b model.Finding) int {
-		return cmp.Or(cmp.Compare(a.Analyzer, b.Analyzer), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Detail, b.Detail))
-	})
-	return out
-}
+func day(date string) string { return date[:min(len(date), 10)] }
 ```
 
 - [ ] **Step 3: Run.**
 
 Run: `go test -race ./... && go vet ./... && test -z "$(gofmt -l .)"`
-Expected: PASS (engine: 4 tests).
+Expected: PASS (resolve: 7 tests, including the sub-tests).
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add services/dns_detect/internal/engine
-git commit -m "feat(dns_detect): engine with point-scan snapshots, aggregation and deterministic output
+git add services/provider_recon/internal/detect/resolve
+git commit -m "feat(provider_recon): detect/resolve — per-record NS, SOA, MX and CNAME resolution with rule and provider-key labelling
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 5: CLI, README and real-data smoke
+### Task 4: `dns-detect resolve` CLI, README and real-data smoke
 
 **Files:**
-- Create: `cmd/dns-detect/main.go`, `cmd/dns-detect/main_test.go`, `services/dns_detect/README.md`
+- Create: `cmd/dns-detect/main.go`, `cmd/dns-detect/main_test.go`
+- Modify: `services/provider_recon/README.md` (new section "dns-detect")
 
 **Interfaces:**
-- Produces: `dns-detect detect -knowledge DIR [-as-of YYYY-MM-DD]`. Input objects on stdin, one result per line on stdout. Exit 2 on bad arguments, 1 on bad input or bad knowledge.
+- Produces: `dns-detect resolve -knowledge DIR`. Record objects on stdin; one line per record on stdout, `{"knowledge_version", "record_id", "results", "findings"}`, in input order. Exit 2 on bad arguments; 1 on a bad record or bad knowledge.
 
 - [ ] **Step 1: Failing test.** `cmd/dns-detect/main_test.go`:
 
@@ -1742,44 +1319,62 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"dns_detect/internal/model"
 )
 
-const knowledgeDir = "../../internal/knowledge/testdata/providers"
+const knowledgeDir = "../../internal/detect/knowledge/testdata/providers"
 
-func TestDetectStreamsOneResultPerInput(t *testing.T) {
-	stdin := strings.NewReader(`{"domain":"a.se","records":[{"name":"a.se","type":"NS","value":"ns1.loopia.se."}]}
-{"domain":"b.se","records":[{"name":"b.se","type":"MX","value":"10 mx.b.se."}]}`)
+type outLine struct {
+	KnowledgeVersion string `json:"knowledge_version"`
+	RecordID         string `json:"record_id"`
+	Results          []struct {
+		ServiceType string `json:"service_type"`
+		ProviderKey string `json:"provider_key"`
+		ValidFrom   string `json:"valid_from"`
+	} `json:"results"`
+	Findings []struct {
+		Code string `json:"code"`
+	} `json:"findings"`
+}
+
+func TestResolveStreamsOneLinePerRecord(t *testing.T) {
+	stdin := strings.NewReader(`{"record_id":"a","root_domain":"a.se","name":"a.se.","type":"NS","value":"ns1.loopia.se.","first_seen":"2026-09-01","last_seen":"2026-09-23"}
+{"record_id":"b","root_domain":"b.se","name":"b.se.","type":"MX","value":"0 ."}
+{"record_id":"c","root_domain":"c.se","name":"c.se.","type":"A","value":"192.0.2.1"}`)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"detect", "-knowledge", knowledgeDir, "-as-of", "2026-09-28"}, stdin, &stdout, &stderr); code != 0 {
+	if code := run([]string{"resolve", "-knowledge", knowledgeDir}, stdin, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want 2 result lines, got %q", stdout.String())
+	if len(lines) != 3 {
+		t.Fatalf("want 3 lines, got %q", stdout.String())
 	}
-	var a, b model.Result
-	if err := json.Unmarshal([]byte(lines[0]), &a); err != nil {
-		t.Fatal(err)
+	var got []outLine
+	for _, l := range lines {
+		var o outLine
+		if err := json.Unmarshal([]byte(l), &o); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(o.KnowledgeVersion, "sha256:") {
+			t.Fatalf("knowledge version = %q", o.KnowledgeVersion)
+		}
+		got = append(got, o)
 	}
-	if err := json.Unmarshal([]byte(lines[1]), &b); err != nil {
-		t.Fatal(err)
+	if got[0].RecordID != "a" || len(got[0].Results) != 1 || got[0].Results[0].ProviderKey != "loopia" || got[0].Results[0].ValidFrom != "2026-09-01" {
+		t.Fatalf("a = %+v", got[0])
 	}
-	if a.Domain != "a.se" || len(a.Services) != 1 || a.Services[0].ProviderKey != "loopia" || a.AsOf != "2026-09-28" {
-		t.Fatalf("a = %+v", a)
+	if got[1].RecordID != "b" || len(got[1].Results) != 0 || len(got[1].Findings) != 1 || got[1].Findings[0].Code != "null_mx" {
+		t.Fatalf("b = %+v", got[1])
 	}
-	if b.Domain != "b.se" || len(b.Services) != 1 || b.Services[0].ProviderKey != model.SelfHosted {
-		t.Fatalf("b = %+v", b)
+	if got[2].RecordID != "c" || len(got[2].Results)+len(got[2].Findings) != 0 {
+		t.Fatalf("c = %+v", got[2])
 	}
 }
 
-func TestDetectRejectsBadArguments(t *testing.T) {
+func TestResolveRejectsBadArguments(t *testing.T) {
 	for name, args := range map[string][]string{
 		"no subcommand":  {},
-		"no knowledge":   {"detect"},
-		"bad date":       {"detect", "-knowledge", knowledgeDir, "-as-of", "28/09/2026"},
-		"missing folder": {"detect", "-knowledge", t.TempDir()},
+		"no knowledge":   {"resolve"},
+		"missing folder": {"resolve", "-knowledge", t.TempDir()},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, strings.NewReader(""), &stdout, &stderr); code == 0 {
@@ -1788,13 +1383,13 @@ func TestDetectRejectsBadArguments(t *testing.T) {
 	}
 }
 
-func TestDetectRejectsBadInput(t *testing.T) {
+func TestResolveRejectsBadRecords(t *testing.T) {
 	for name, stdin := range map[string]string{
-		"not json":       `{"domain":`,
-		"missing domain": `{"records":[]}`,
+		"not json":       `{"record_id":`,
+		"missing fields": `{"record_id":"x","value":"ns1.loopia.se."}`,
 	} {
 		var stdout, stderr bytes.Buffer
-		if code := run([]string{"detect", "-knowledge", knowledgeDir}, strings.NewReader(stdin), &stdout, &stderr); code != 1 {
+		if code := run([]string{"resolve", "-knowledge", knowledgeDir}, strings.NewReader(stdin), &stdout, &stderr); code != 1 {
 			t.Errorf("%s: exit %d, want 1 (%s)", name, code, stderr.String())
 		}
 	}
@@ -1807,13 +1402,15 @@ Expected: FAIL (undefined: `run`).
 - [ ] **Step 2: Implement.** `cmd/dns-detect/main.go`:
 
 ```go
-// Command dns-detect runs the detection engine over domains read from stdin.
+// Command dns-detect resolves DNS records into the services they prove.
 //
-//	dns-detect detect -knowledge DIR [-as-of YYYY-MM-DD] < inputs.json > results.ndjson
+//	dns-detect resolve -knowledge DIR < records.ndjson > results.ndjson
 //
-// stdin holds one or more input objects ({"domain": …, "records": [...]}),
-// concatenated or one per line; stdout gets one result object per line, in
-// input order. DIR holds provider-recon documents (<slug>.json).
+// stdin holds record objects ({"record_id", "root_domain", "name", "type",
+// "value", "first_seen", "last_seen"}), concatenated or one per line. stdout
+// gets one line per record, in input order: its results and findings plus the
+// knowledge version that produced them. DIR holds provider-recon documents
+// (<slug>.json). The ClickHouse worker (spec slice 4) wraps the same resolver.
 package main
 
 import (
@@ -1824,101 +1421,112 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
-	"dns_detect/internal/engine"
-	"dns_detect/internal/knowledge"
-	"dns_detect/internal/model"
+	"provider_recon/internal/detect/knowledge"
+	"provider_recon/internal/detect/resolve"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
+// line is one output line: a record's output and the knowledge version.
+type line struct {
+	KnowledgeVersion string `json:"knowledge_version"`
+	resolve.Output
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "detect" {
-		fmt.Fprintln(stderr, "usage: dns-detect detect -knowledge DIR [-as-of YYYY-MM-DD] < inputs.json")
+	if len(args) == 0 || args[0] != "resolve" {
+		fmt.Fprintln(stderr, "usage: dns-detect resolve -knowledge DIR < records.ndjson")
 		return 2
 	}
-	fs := flag.NewFlagSet("detect", flag.ContinueOnError)
+	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("knowledge", "", "directory of provider-recon documents (<slug>.json)")
-	asOf := fs.String("as-of", "", "evaluation date YYYY-MM-DD (default: ignore seen windows)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
 	if *dir == "" {
-		fmt.Fprintln(stderr, "detect: -knowledge is required")
+		fmt.Fprintln(stderr, "resolve: -knowledge is required")
 		return 2
-	}
-	if *asOf != "" {
-		if _, err := time.Parse(time.DateOnly, *asOf); err != nil {
-			fmt.Fprintf(stderr, "detect: -as-of %q is not YYYY-MM-DD\n", *asOf)
-			return 2
-		}
 	}
 	kb, err := knowledge.LoadDir(*dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "detect: load knowledge: %v\n", err)
+		fmt.Fprintf(stderr, "resolve: load knowledge: %v\n", err)
 		return 1
 	}
-	e := engine.Default(kb)
 	dec := json.NewDecoder(bufio.NewReader(stdin))
 	out := bufio.NewWriter(stdout)
 	defer out.Flush()
 	enc := json.NewEncoder(out)
 	for n := 1; ; n++ {
-		var in model.Input
-		if err := dec.Decode(&in); errors.Is(err, io.EOF) {
+		var rec resolve.Record
+		if err := dec.Decode(&rec); errors.Is(err, io.EOF) {
 			return 0
 		} else if err != nil {
-			fmt.Fprintf(stderr, "detect: input %d: %v\n", n, err)
+			fmt.Fprintf(stderr, "resolve: record %d: %v\n", n, err)
 			return 1
 		}
-		if in.Domain == "" {
-			fmt.Fprintf(stderr, "detect: input %d: domain is required\n", n)
+		if rec.RootDomain == "" || rec.Name == "" || rec.Type == "" {
+			fmt.Fprintf(stderr, "resolve: record %d: root_domain, name and type are required\n", n)
 			return 1
 		}
-		if err := enc.Encode(e.Detect(in, *asOf)); err != nil {
-			fmt.Fprintf(stderr, "detect: write: %v\n", err)
+		if err := enc.Encode(line{KnowledgeVersion: kb.Version(), Output: resolve.Resolve(rec, kb)}); err != nil {
+			fmt.Fprintf(stderr, "resolve: write: %v\n", err)
 			return 1
 		}
 	}
 }
 ```
 
-`services/dns_detect/README.md` covers:
-- purpose: one domain's DNS records → services and evidence, as of a date;
+The README section "dns-detect" covers:
+- purpose: one DNS record → the services it proves, with the record's window;
 - the spec link;
-- package layout;
-- the CLI usage line and one example input and output;
-- the `asOf` point-scan rule;
-- how to refresh the test fixtures (Task 2, Step 1);
-- that SPF, DKIM, DMARC, TXT and IP come in slices 2–3.
+- the package layout (`internal/detect/...`);
+- the CLI usage line with one example record and its output line;
+- the routing table for slice 1;
+- that fallback rows are applied by the history view (slice 4);
+- how to refresh the fixtures (Task 2, Step 1).
 
 - [ ] **Step 3: Run.**
 
 Run: `go test -race ./... && go vet ./... && test -z "$(gofmt -l .)"`
-Expected: PASS (all six packages).
+Expected: PASS (13 packages).
 
-- [ ] **Step 4: Real-data smoke** (not committed; output in the ledger):
+- [ ] **Step 4: Real-data smoke** (not committed; summary in the ledger):
 
 ```bash
 D=$(mktemp -d); for s in $(ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT JSONExtractString(json,'slug') FROM corpscout.provider_recon_documents_s3 FORMAT TSV\""); do
   ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT json FROM corpscout.provider_recon_documents_s3 WHERE JSONExtractString(json,'slug')='$s' FORMAT RawBLOB\"" > $D/$s.json; done
-ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT root_domain AS domain, groupArray(map('name', name, 'type', toString(record_type), 'value', value, 'first_seen', toString(toDate(first_seen)), 'last_seen', toString(toDate(last_seen)))) AS records FROM corpscout.commoncrawl_domain_dns_records WHERE root_domain IN ('spotify.com','volvo.com','loopia.se') GROUP BY root_domain FORMAT JSONEachRow\"" \
- | go run ./cmd/dns-detect detect -knowledge $D -as-of 2026-09-25 | jq -c '{domain, observed_at, services: [.services[] | [.service_type, .provider_key]]}'
+ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT lower(hex(record_id)) AS record_id, root_domain, name, toString(record_type) AS type, value, toString(toDate(first_seen)) AS first_seen, toString(toDate(last_seen)) AS last_seen FROM corpscout.commoncrawl_domain_dns_records WHERE root_domain IN ('spotify.com','volvo.com','loopia.se') AND record_type IN ('NS','SOA','MX','CNAME') FORMAT JSONEachRow\"" \
+ | go run ./cmd/dns-detect resolve -knowledge $D \
+ | jq -r '.results[] | [.root_domain, .service_type, .provider_key, (if .fallback then "fallback" else "" end), .valid_from, .valid_to] | @tsv' \
+ | sort | awk -F'\t' '{k=$1" "$2" "$3" "$4; if(!(k in f)||$5<f[k])f[k]=$5; if($6>l[k])l[k]=$6; n[k]++} END{for(k in n) print k, f[k], "->", l[k], n[k]" rows"}' | sort
 ```
-Expected (as prototyped on 2026-09-28):
-- spotify.com, observed 2026-09-25: `cdn fastly`, `dns google`, `dns nsone.net`, `email google`;
-- volvo.com, observed 2026-09-19 (between scans): `cdn akamai`, `dns self-hosted`, `dns volvo.se`, `email microsoft`;
-- loopia.se, observed 2026-09-23: `dns loopia`, `email loopia`, `hosting self-hosted`.
-
-The service lists can grow if provider definitions changed since; the observation dates must match.
+Expected (as prototyped on 2026-09-28, from 134 records, 25 of which have no result because they are non-apex):
+```
+loopia.se dns loopia  2026-07-14 -> 2026-09-23 4 rows
+loopia.se dns loopia fallback 2026-07-14 -> 2026-09-23 14 rows
+loopia.se email loopia  2026-07-14 -> 2026-09-23 2 rows
+loopia.se hosting self-hosted  2026-07-09 -> 2026-09-23 3 rows
+spotify.com cdn fastly  2026-07-10 -> 2026-09-25 4 rows
+spotify.com dns google  2026-07-15 -> 2026-09-25 12 rows
+spotify.com dns google fallback 2026-07-10 -> 2026-09-25 4 rows
+spotify.com dns nsone.net  2026-07-15 -> 2026-09-25 3 rows
+spotify.com dns nsone.net fallback 2026-07-23 -> 2026-08-14 1 rows
+spotify.com email google  2026-07-15 -> 2026-09-25 21 rows
+volvo.com cdn akamai  2026-07-10 -> 2026-09-26 5 rows
+volvo.com dns self-hosted  2026-07-15 -> 2026-09-26 8 rows
+volvo.com dns volvo.se  2026-07-15 -> 2026-09-26 8 rows
+volvo.com dns volvo.se fallback 2026-07-10 -> 2026-09-26 16 rows
+volvo.com email microsoft  2026-07-15 -> 2026-09-26 4 rows
+```
+New scans or definitions can extend the dates, the row counts or the providers. The service and provider pairs above must still be present.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add services/dns_detect/cmd services/dns_detect/README.md
-git commit -m "feat(dns_detect): streaming detect CLI and README
+git add services/provider_recon/cmd/dns-detect services/provider_recon/README.md
+git commit -m "feat(provider_recon): dns-detect resolve CLI streaming per-record results
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
