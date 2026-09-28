@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,11 +189,6 @@ func TestVersionTracksOnlyWhatTheIndexUses(t *testing.T) {
 	}
 	v0 := version(base())
 
-	ranges := base()
-	ranges.Services[0].Evidence.IPRanges = []model.IPRange{{CIDR: "192.0.2.0/24", Lifecycle: model.Lifecycle{Status: model.StatusActive}}}
-	if version(ranges) != v0 {
-		t.Error("an IP range change moved the version, but the index does not use ranges")
-	}
 	seen := base()
 	seen.Services[0].Evidence.DNSRules[0].LastSeen = "2026-12-31"
 	if version(seen) != v0 {
@@ -210,5 +206,97 @@ func TestVersionTracksOnlyWhatTheIndexUses(t *testing.T) {
 		if version(d) == v0 {
 			t.Errorf("%s: version unchanged", name)
 		}
+	}
+}
+
+func ipRange(cidr, status, first, last string) model.IPRange {
+	return model.IPRange{CIDR: cidr, Confidence: 1, Lifecycle: model.Lifecycle{Status: status, FirstSeen: first, LastSeen: last}}
+}
+
+func withRanges(slug, key string, types []string, ranges ...model.IPRange) model.Document {
+	s := svc(key, types)
+	s.Evidence.IPRanges = ranges
+	return doc(slug, nil, s)
+}
+
+func mustPrefix(t *testing.T, s string) netip.Prefix {
+	t.Helper()
+	p, err := netip.ParsePrefix(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLookupIPReturnsContainingRangesWithWindows(t *testing.T) {
+	idx, err := Compile([]model.Document{
+		withRanges("aws", "aws.other", []string{"iaas"}, ipRange("52.84.0.0/14", model.StatusActive, "2026-09-27", "2026-09-28")),
+		withRanges("aws2", "aws2.cloudfront", []string{"cdn"},
+			ipRange("52.84.0.0/15", model.StatusRemoved, "2026-10-01", "2026-11-15"),
+			ipRange("2600:9000::/28", model.StatusActive, "2026-10-01", "2026-12-01")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := idx.LookupIP(mustPrefix(t, "52.84.1.1/32"))
+	if len(got) != 2 {
+		t.Fatalf("ranges = %+v", got)
+	}
+	// Longest prefix first.
+	if got[0].Prefix.String() != "52.84.0.0/15" || got[0].ServiceKey != "aws2.cloudfront" || got[0].From != "2026-10-01" || got[0].To != "2026-11-15" ||
+		got[0].RuleID != "aws2/aws2.cloudfront/IP 52.84.0.0/15" || got[0].ServiceTypes[0] != "cdn" {
+		t.Fatalf("nested range = %+v", got[0])
+	}
+	// First seen on the timeline's first day: open start; active: open end.
+	if got[1].Prefix.String() != "52.84.0.0/14" || got[1].From != "" || got[1].To != "" {
+		t.Fatalf("outer range = %+v", got[1])
+	}
+	if v6 := idx.LookupIP(mustPrefix(t, "2600:9000:1::1/128")); len(v6) != 1 || v6[0].From != "2026-10-01" || v6[0].To != "" {
+		t.Fatalf("v6 = %+v", v6)
+	}
+	if none := idx.LookupIP(mustPrefix(t, "192.0.2.1/32")); len(none) != 0 {
+		t.Fatalf("outside = %+v", none)
+	}
+	// A /24 inside the /15 matches both; a /13 containing them matches nothing.
+	if len(idx.LookupIP(mustPrefix(t, "52.85.10.0/24"))) != 2 || len(idx.LookupIP(mustPrefix(t, "52.80.0.0/13"))) != 0 {
+		t.Fatal("prefix containment wrong")
+	}
+}
+
+func TestRangesOfRemovedServicesStayInTheHistory(t *testing.T) {
+	d := withRanges("p", "p.old", []string{"cdn"}, ipRange("198.51.100.0/24", model.StatusRemoved, "2026-09-27", "2026-10-05"))
+	d.Services[0].RemovedAt = "2026-10-06"
+	idx, err := Compile([]model.Document{d})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.LookupIP(mustPrefix(t, "198.51.100.7/32")); len(got) != 1 || got[0].To != "2026-10-05" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestCompileRefusesAnInvalidCIDR(t *testing.T) {
+	if _, err := Compile([]model.Document{withRanges("p", "p.a", []string{"cdn"}, ipRange("10.0.0/8", model.StatusActive, "2026-09-27", "2026-09-28"))}); err == nil {
+		t.Fatal("invalid CIDR compiled")
+	}
+}
+
+func TestVersionTracksRanges(t *testing.T) {
+	v := func(ranges ...model.IPRange) string {
+		idx, err := Compile([]model.Document{withRanges("p", "p.a", []string{"cdn"}, ranges...)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idx.Version()
+	}
+	base := v(ipRange("198.51.100.0/24", model.StatusActive, "2026-09-27", "2026-09-28"))
+	if v(ipRange("198.51.100.0/24", model.StatusActive, "2026-09-27", "2026-12-31")) != base {
+		t.Error("a last_seen bump of an active range moved the version")
+	}
+	if v(ipRange("198.51.100.0/24", model.StatusRemoved, "2026-09-27", "2026-12-31")) == base {
+		t.Error("a removal did not move the version")
+	}
+	if v(ipRange("198.51.100.0/24", model.StatusActive, "2026-09-27", "2026-09-28"), ipRange("203.0.113.0/24", model.StatusActive, "2026-09-27", "2026-09-28")) == base {
+		t.Error("an added range did not move the version")
 	}
 }

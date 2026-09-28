@@ -6,11 +6,15 @@
 package knowledge
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
+
+	"github.com/gaissmai/bart"
 
 	"provider_recon/internal/matcher"
 	"provider_recon/internal/model"
@@ -67,8 +71,27 @@ func (p Provider) FirstService(serviceType string) string {
 	return ""
 }
 
+// IPRange is one provider range instance with the window it was valid in.
+// From and To are dates (YYYY-MM-DD); "" leaves that side open. From is open
+// for ranges first seen on the timeline's first day (nothing earlier is
+// known); To is open while the range is active, else its last_seen.
+type IPRange struct {
+	Prefix       netip.Prefix
+	ProviderSlug string
+	ServiceKey   string
+	ServiceTypes []string
+	FeedTag      string
+	Confidence   float64
+	From         string
+	To           string
+	RuleID       string
+}
+
 // Knowledge is what analyzers may ask.
 type Knowledge interface {
+	// LookupIP returns every range whose prefix contains p, longest prefix
+	// first, then by rule id.
+	LookupIP(p netip.Prefix) []IPRange
 	// Match returns the best rule of kind matching subject: highest priority,
 	// then confidence, then rule id.
 	Match(kind Kind, subject string) (Match, bool)
@@ -97,6 +120,8 @@ type Index struct {
 	exactKeys map[string]*Provider
 	globKeys  []globKey
 	providers []*Provider
+	ipTrie    bart.Table[netip.Prefix]
+	ipRanges  map[netip.Prefix][]IPRange
 	version   string
 }
 
@@ -111,7 +136,7 @@ var _ Knowledge = (*Index)(nil)
 // ranges and seen dates don't move it, so results are only re-resolved when
 // they could change.
 func Compile(docs []model.Document) (*Index, error) {
-	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}}
+	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}, ipRanges: map[netip.Prefix][]IPRange{}}
 	var used []string
 	for _, d := range docs {
 		if d.Version != model.ContractVersion {
@@ -119,6 +144,14 @@ func Compile(docs []model.Document) (*Index, error) {
 		}
 		if err := idx.add(d); err != nil {
 			return nil, err
+		}
+	}
+	if err := idx.addRanges(docs); err != nil {
+		return nil, err
+	}
+	for _, rs := range idx.ipRanges {
+		for _, r := range rs {
+			used = append(used, fmt.Sprintf("ip %s|%s|%s|%g|%s", r.RuleID, r.From, r.To, r.Confidence, strings.Join(r.ServiceTypes, ",")))
 		}
 	}
 	for kind, rules := range idx.rules {
@@ -230,3 +263,54 @@ func (idx *Index) ProviderForKey(key string) (Provider, bool) {
 
 // Version implements Knowledge.
 func (idx *Index) Version() string { return idx.version }
+
+// addRanges indexes every range instance of every service, removed ones too:
+// they are the history that older records are matched against.
+func (idx *Index) addRanges(docs []model.Document) error {
+	start := ""
+	for _, d := range docs {
+		for _, s := range d.Services {
+			for _, r := range s.Evidence.IPRanges {
+				if r.FirstSeen != "" && (start == "" || r.FirstSeen < start) {
+					start = r.FirstSeen
+				}
+			}
+		}
+	}
+	for _, d := range docs {
+		for _, s := range d.Services {
+			for _, r := range s.Evidence.IPRanges {
+				p, err := netip.ParsePrefix(r.CIDR)
+				if err != nil {
+					return fmt.Errorf("provider %q service %q: range %q: %w", d.Slug, s.Key, r.CIDR, err)
+				}
+				p = p.Masked()
+				e := IPRange{Prefix: p, ProviderSlug: d.Slug, ServiceKey: s.Key, ServiceTypes: s.ServiceTypes, FeedTag: r.FeedTag,
+					Confidence: r.Confidence, From: r.FirstSeen, RuleID: fmt.Sprintf("%s/%s/IP %s", d.Slug, s.Key, p)}
+				if e.From == start {
+					e.From = ""
+				}
+				if r.Status != model.StatusActive {
+					e.To = r.LastSeen
+				}
+				if _, seen := idx.ipRanges[p]; !seen {
+					idx.ipTrie.Insert(p, p)
+				}
+				idx.ipRanges[p] = append(idx.ipRanges[p], e)
+			}
+		}
+	}
+	return nil
+}
+
+// LookupIP implements Knowledge.
+func (idx *Index) LookupIP(p netip.Prefix) []IPRange {
+	var out []IPRange
+	for sp := range idx.ipTrie.Supernets(p.Masked()) {
+		out = append(out, idx.ipRanges[sp]...)
+	}
+	slices.SortFunc(out, func(a, b IPRange) int {
+		return cmp.Or(cmp.Compare(b.Prefix.Bits(), a.Prefix.Bits()), cmp.Compare(a.RuleID, b.RuleID), cmp.Compare(a.From, b.From))
+	})
+	return out
+}

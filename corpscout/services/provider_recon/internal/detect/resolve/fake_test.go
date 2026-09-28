@@ -1,7 +1,9 @@
 package resolve
 
 import (
+	"net/netip"
 	"reflect"
+	"slices"
 	"testing"
 
 	"provider_recon/internal/detect/knowledge"
@@ -11,6 +13,7 @@ import (
 type fakeKB struct {
 	rules map[knowledge.Kind]map[string]knowledge.Match
 	keys  map[string]knowledge.Provider
+	ips   []knowledge.IPRange
 }
 
 func (f fakeKB) Match(kind knowledge.Kind, subject string) (knowledge.Match, bool) {
@@ -24,6 +27,18 @@ func (f fakeKB) ProviderForKey(key string) (knowledge.Provider, bool) {
 }
 
 func (fakeKB) Version() string { return "fake" }
+
+// LookupIP returns the fake's ranges containing p, longest prefix first.
+func (f fakeKB) LookupIP(p netip.Prefix) []knowledge.IPRange {
+	var out []knowledge.IPRange
+	for _, r := range f.ips {
+		if r.Prefix.Bits() <= p.Bits() && r.Prefix.Contains(p.Addr()) {
+			out = append(out, r)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b knowledge.IPRange) int { return b.Prefix.Bits() - a.Prefix.Bits() })
+	return out
+}
 
 var kb = fakeKB{
 	rules: map[knowledge.Kind]map[string]knowledge.Match{
