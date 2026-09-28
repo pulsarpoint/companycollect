@@ -18,6 +18,9 @@ func NewFastly() *Fastly { return &Fastly{URL: "https://api.fastly.com/public-ip
 // Name implements Collector.
 func (*Fastly) Name() string { return "fastly_public_ips" }
 
+// Format implements Collector.
+func (*Fastly) Format() string { return "JSON API" }
+
 // Collect implements Collector.
 func (c *Fastly) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	resp, err := f.Get(ctx, c.URL, "application/json")

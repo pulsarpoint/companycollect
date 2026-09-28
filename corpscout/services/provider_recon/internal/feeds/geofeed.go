@@ -18,6 +18,9 @@ func NewGeofeed() *Geofeed { return &Geofeed{} }
 // Name implements Collector.
 func (*Geofeed) Name() string { return "geofeed" }
 
+// Format implements Collector.
+func (*Geofeed) Format() string { return "CSV (RFC 8805 geofeed)" }
+
 // ValidateParams requires exactly one https url.
 func (*Geofeed) ValidateParams(params map[string]string) error {
 	if len(params) != 1 || !strings.HasPrefix(params["url"], "https://") {

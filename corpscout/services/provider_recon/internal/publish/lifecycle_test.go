@@ -147,3 +147,21 @@ func TestDiffKeepsOverlappingFeedsApart(t *testing.T) {
 		t.Fatalf("one of two overlapping instances went missing but the diff shows %+v", d)
 	}
 }
+
+func TestFeedRunCarriesSourceDetails(t *testing.T) {
+	ctx := context.Background()
+	store := FSStore{Root: t.TempDir()}
+	now := time.Date(2026, 9, 28, 6, 0, 0, 0, time.UTC)
+	d := lcDoc(t, ip("10.0.1.0/24", "active", "2026-09-28"))
+	d.Collection.Collectors["aws_ip_ranges"] = model.CollectorStatus{Status: "ok", Items: 1, SourceURL: "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		SourceVersion: "syncToken=1", Format: "JSON", FetchedAt: now, LastSuccessAt: &now, SkippedLines: 2}
+	m, err := Publish(ctx, store, []model.Document{d}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := m.Feeds[0]
+	if f.SourceURL != "https://ip-ranges.amazonaws.com/ip-ranges.json" || f.SourceVersion != "syncToken=1" || f.Format != "JSON" ||
+		!f.FetchedAt.Equal(now) || f.LastSuccessAt == nil || f.SkippedLines != 2 {
+		t.Fatalf("feed run = %+v", f)
+	}
+}

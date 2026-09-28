@@ -31,6 +31,8 @@ type Result struct {
 // Collector fetches one publication.
 type Collector interface {
 	Name() string
+	// Format names the publication's transport format for operators, e.g. "JSON API".
+	Format() string
 	ValidateParams(params map[string]string) error
 	Collect(ctx context.Context, f *Fetcher, params map[string]string) (Result, error)
 }

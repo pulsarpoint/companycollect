@@ -25,6 +25,9 @@ func NewBunny() *Bunny {
 // Name implements Collector.
 func (*Bunny) Name() string { return "bunny_edge_servers" }
 
+// Format implements Collector.
+func (*Bunny) Format() string { return "JSON API" }
+
 // Collect implements Collector.
 func (c *Bunny) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	b := rangeBuilder{res: Result{SourceURL: c.URLv4}}

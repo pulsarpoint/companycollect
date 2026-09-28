@@ -20,6 +20,9 @@ func NewOracle() *Oracle {
 // Name implements Collector.
 func (*Oracle) Name() string { return "oracle_public_ip_ranges" }
 
+// Format implements Collector.
+func (*Oracle) Format() string { return "JSON" }
+
 // Collect implements Collector.
 func (c *Oracle) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	resp, err := f.Get(ctx, c.URL, "application/json")

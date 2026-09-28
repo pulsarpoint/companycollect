@@ -27,6 +27,9 @@ func NewRIPEstat() *RIPEstat {
 // Name implements Collector.
 func (*RIPEstat) Name() string { return "ripestat_announced" }
 
+// Format implements Collector.
+func (*RIPEstat) Format() string { return "RIPEstat JSON API" }
+
 // ValidateParams requires exactly one numeric asn.
 func (*RIPEstat) ValidateParams(params map[string]string) error {
 	if len(params) != 1 || !asnRE.MatchString(params["asn"]) {

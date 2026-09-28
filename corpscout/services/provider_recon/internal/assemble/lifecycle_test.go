@@ -483,3 +483,18 @@ func TestSameDayFeedReaddRevivesTheInstance(t *testing.T) {
 		t.Fatalf("same-day re-add must revive the one instance, got %+v", rs)
 	}
 }
+
+func TestCollectorStatusCarriesFormat(t *testing.T) {
+	ok := cidrs(1)
+	o := ok["aws_ip_ranges"]
+	o.Format = "JSON"
+	ok["aws_ip_ranges"] = o
+	d0 := run(t, lcDef(), ok, nil, 0)
+	if got := d0.Collection.Collectors["aws_ip_ranges"].Format; got != "JSON" {
+		t.Fatalf("ok status format = %q", got)
+	}
+	d1 := run(t, lcDef(), failed(), &d0, 1)
+	if got := d1.Collection.Collectors["aws_ip_ranges"].Format; got != "JSON" {
+		t.Fatalf("stale status must keep the previous format, got %q", got)
+	}
+}

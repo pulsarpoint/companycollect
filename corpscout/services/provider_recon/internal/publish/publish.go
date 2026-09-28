@@ -54,6 +54,13 @@ type FeedRun struct {
 	Churn        model.Churn `json:"churn"`
 	UnmappedTags []string    `json:"unmapped_tags,omitempty"`
 	Error        string      `json:"error,omitempty"`
+	// Source details, so operators see where and how each feed was fetched.
+	SourceURL     string     `json:"source_url,omitempty"`
+	SourceVersion string     `json:"source_version,omitempty"`
+	Format        string     `json:"format,omitempty"`
+	FetchedAt     time.Time  `json:"fetched_at"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	SkippedLines  int        `json:"skipped_lines,omitempty"`
 }
 
 // IndexKey is the run index the backoffice reads: recent runs, newest first,
@@ -190,7 +197,9 @@ func PublishScoped(ctx context.Context, store Store, docs []model.Document, now 
 		for _, id := range ids {
 			st := doc.Collection.Collectors[id]
 			m.Feeds = append(m.Feeds, FeedRun{Slug: doc.Slug, Collector: id, Status: st.Status, Items: st.Items,
-				Churn: st.Churn, UnmappedTags: st.UnmappedTags, Error: st.Error})
+				Churn: st.Churn, UnmappedTags: st.UnmappedTags, Error: st.Error,
+				SourceURL: st.SourceURL, SourceVersion: st.SourceVersion, Format: st.Format, FetchedAt: st.FetchedAt,
+				LastSuccessAt: st.LastSuccessAt, SkippedLines: st.SkippedLines})
 			if st.Status != "ok" {
 				m.CollectorIssues = append(m.CollectorIssues, CollectorIssue{Slug: doc.Slug, Collector: id, Status: st.Status, Error: st.Error})
 			}

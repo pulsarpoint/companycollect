@@ -20,6 +20,8 @@ import (
 type FeedOutcome struct {
 	Result feeds.Result
 	Err    error
+	// Format is the collector's Format(), for operators.
+	Format string
 }
 
 const (
@@ -108,11 +110,17 @@ func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *mo
 		if !ran {
 			outcome = FeedOutcome{Err: errors.New("collector did not run")}
 		}
+		var status model.CollectorStatus
 		if outcome.Err == nil {
-			doc.Collection.Collectors[id] = applyFeed(&doc, index, defined, ref, outcome.Result, prevItems, today, now)
+			status = applyFeed(&doc, index, defined, ref, outcome.Result, prevItems, today, now)
 		} else {
-			doc.Collection.Collectors[id] = carryForward(&doc, index, prevItems, prevStatus, outcome.Err, now)
+			status = carryForward(&doc, index, prevItems, prevStatus, outcome.Err, now)
 		}
+		status.Format = outcome.Format
+		if status.Format == "" {
+			status.Format = prevStatus.Format
+		}
+		doc.Collection.Collectors[id] = status
 	}
 	// Feeds dropped from the definition: their ranges are removed now.
 	for _, p := range feedItems(prev, func(collector string) bool { return !feedIDs[collector] }) {

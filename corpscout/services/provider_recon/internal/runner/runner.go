@@ -182,7 +182,7 @@ func CollectFeeds(ctx context.Context, refs []definitions.FeedRef, collectors ma
 					"version", res.SourceVersion, "took", time.Since(start).Round(time.Millisecond))
 			}
 			mu.Lock()
-			out[ref.ID()] = assemble.FeedOutcome{Result: res, Err: err}
+			out[ref.ID()] = assemble.FeedOutcome{Result: res, Err: err, Format: collectors[ref.Collector].Format()}
 			mu.Unlock()
 		}()
 	}

@@ -69,3 +69,20 @@ func TestRegistryNamesMatchCollectors(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryCollectorsDescribeTheirFormat(t *testing.T) {
+	want := map[string]string{
+		"aws_ip_ranges": "JSON", "google_cloud": "JSON", "google_goog": "JSON", "oracle_public_ip_ranges": "JSON",
+		"cloudflare_ips": "JSON API", "fastly_public_ips": "JSON API", "bunny_edge_servers": "JSON API", "github_meta": "JSON API",
+		"azure_service_tags": "HTML → JSON", "geofeed": "CSV (RFC 8805 geofeed)", "ripestat_announced": "RIPEstat JSON API",
+	}
+	reg := Registry()
+	if len(reg) != len(want) {
+		t.Fatalf("registry has %d collectors, test knows %d", len(reg), len(want))
+	}
+	for name, c := range reg {
+		if c.Format() != want[name] {
+			t.Errorf("%s.Format() = %q, want %q", name, c.Format(), want[name])
+		}
+	}
+}

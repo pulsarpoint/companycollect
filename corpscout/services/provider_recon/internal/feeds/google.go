@@ -61,6 +61,9 @@ func NewGoogleCloud() *GoogleCloud {
 // Name implements Collector.
 func (*GoogleCloud) Name() string { return "google_cloud" }
 
+// Format implements Collector.
+func (*GoogleCloud) Format() string { return "JSON" }
+
 // Collect implements Collector.
 func (c *GoogleCloud) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	return collectGoogle(ctx, f, c.URL, "")
@@ -80,6 +83,9 @@ func NewGoogleGoog() *GoogleGoog {
 
 // Name implements Collector.
 func (*GoogleGoog) Name() string { return "google_goog" }
+
+// Format implements Collector.
+func (*GoogleGoog) Format() string { return "JSON" }
 
 // Collect implements Collector.
 func (c *GoogleGoog) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {

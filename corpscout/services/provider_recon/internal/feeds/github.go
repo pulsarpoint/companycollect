@@ -20,6 +20,9 @@ func NewGitHub() *GitHub { return &GitHub{URL: "https://api.github.com/meta"} }
 // Name implements Collector.
 func (*GitHub) Name() string { return "github_meta" }
 
+// Format implements Collector.
+func (*GitHub) Format() string { return "JSON API" }
+
 // Collect implements Collector.
 func (c *GitHub) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	resp, err := f.Get(ctx, c.URL, "application/vnd.github+json")

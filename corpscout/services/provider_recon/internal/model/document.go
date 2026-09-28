@@ -235,6 +235,7 @@ type CollectorStatus struct {
 	Status        string     `json:"status"` // ok | stale | failed
 	SourceURL     string     `json:"source_url,omitempty"`
 	SourceVersion string     `json:"source_version,omitempty"`
+	Format        string     `json:"format,omitempty"`
 	Items         int        `json:"items"`
 	FetchedAt     time.Time  `json:"fetched_at"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`

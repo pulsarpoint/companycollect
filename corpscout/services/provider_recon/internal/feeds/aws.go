@@ -20,6 +20,9 @@ func NewAWS() *AWS { return &AWS{URL: awsURL} }
 // Name implements Collector.
 func (*AWS) Name() string { return "aws_ip_ranges" }
 
+// Format implements Collector.
+func (*AWS) Format() string { return "JSON" }
+
 // Collect implements Collector.
 func (c *AWS) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	resp, err := f.Get(ctx, c.URL, "application/json")

@@ -19,6 +19,9 @@ func NewCloudflare() *Cloudflare { return &Cloudflare{URL: "https://api.cloudfla
 // Name implements Collector.
 func (*Cloudflare) Name() string { return "cloudflare_ips" }
 
+// Format implements Collector.
+func (*Cloudflare) Format() string { return "JSON API" }
+
 // Collect implements Collector.
 func (c *Cloudflare) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	resp, err := f.Get(ctx, c.URL, "application/json")

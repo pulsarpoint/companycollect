@@ -25,6 +25,9 @@ func NewAzure() *Azure { return &Azure{PageURL: azurePage, LinkPattern: azureLin
 // Name implements Collector.
 func (*Azure) Name() string { return "azure_service_tags" }
 
+// Format implements Collector.
+func (*Azure) Format() string { return "HTML → JSON" }
+
 // Collect implements Collector.
 func (c *Azure) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Result, error) {
 	page, err := f.Get(ctx, c.PageURL, "text/html")
