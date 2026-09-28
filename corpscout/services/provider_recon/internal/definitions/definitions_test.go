@@ -102,7 +102,16 @@ func TestValidateReportsProblems(t *testing.T) {
 		}, "invalid regex"},
 		{"bad record type", func(d *Definition) {
 			d.Services[0].DNSRules = []DNSRuleDef{{RecordType: "SOA", MatchField: "target", MatcherType: "suffix", Pattern: "x"}}
-		}, `unsupported record_type "SOA"`},
+		}, `unsupported dns rule kind SOA/target`},
+		{"kind the resolver has no analyzer for", func(d *Definition) {
+			d.Services[0].DNSRules = []DNSRuleDef{{RecordType: "A", MatchField: "value", MatcherType: "exact", Pattern: "192.0.2.1"}}
+		}, `unsupported dns rule kind A/value`},
+		{"match field the resolver has no analyzer for", func(d *Definition) {
+			d.Services[0].DNSRules = []DNSRuleDef{{RecordType: "TXT", MatchField: "all", MatcherType: "contains", Pattern: "x"}}
+		}, `unsupported dns rule kind TXT/all`},
+		{"exists on a dns rule", func(d *Definition) {
+			d.Services[0].DNSRules = []DNSRuleDef{{RecordType: "NS", MatchField: "target", MatcherType: "exists"}}
+		}, "exists is not meaningful for dns rules"},
 		{"header without name", func(d *Definition) {
 			d.Services[0].HTTPRules = []HTTPRuleDef{{HTTPPart: "header", MatcherType: "exists"}}
 		}, "header_name is required"},
@@ -247,5 +256,20 @@ func TestValidateFeedLifecycleSettings(t *testing.T) {
 	err := Validate([]Definition{d}, collectors())
 	if err == nil || !strings.Contains(err.Error(), `duplicate feed "fake_feed"`) {
 		t.Fatalf("duplicate feed: err = %v", err)
+	}
+}
+
+func TestValidateAcceptsEveryResolverRuleKind(t *testing.T) {
+	d := base()
+	d.Services[0].ServiceTypes = []string{"email_sending", "dmarc_reporting"}
+	d.Services[0].DNSRules = []DNSRuleDef{
+		{RecordType: "SPF", MatchField: "include", MatcherType: "suffix", Pattern: "_spf.acme.net"},
+		{RecordType: "DKIM", MatchField: "selector", MatcherType: "exact", Pattern: "acme1"},
+		{RecordType: "DKIM", MatchField: "target", MatcherType: "suffix", Pattern: "dkim.acme.net"},
+		{RecordType: "DMARC", MatchField: "report", MatcherType: "suffix", Pattern: "rua.acme.net"},
+		{RecordType: "TXT", MatchField: "name", MatcherType: "exact", Pattern: "_acme-challenge"},
+	}
+	if err := Validate([]Definition{d}, collectors()); err != nil {
+		t.Fatal(err)
 	}
 }

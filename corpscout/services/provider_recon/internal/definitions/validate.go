@@ -20,15 +20,13 @@ type ParamValidator interface {
 }
 
 var (
-	categories     = []string{"cdn", "cloud", "dns", "email", "hosting", "other", "paas", "saas", "security"}
-	dnsRecordTypes = []string{"A", "AAAA", "CAA", "CNAME", "HTTPS", "MX", "NS", "SRV", "TXT"}
-	dnsMatchFields = []string{"all", "name", "priority", "target", "value"}
-	httpParts      = []string{"body", "cookie", "header", "redirect_location", "status", "title", "tls_alpn"}
-	identityTypes  = []string{"issuer_cn", "issuer_org", "san_suffix", "subject_cn"}
-	slugRE         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
-	serviceNameRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-	providerKeyRE  = regexp.MustCompile(`^[a-z0-9*][a-z0-9.*-]*[a-z0-9*]$`)
-	countryRE      = regexp.MustCompile(`^[A-Z]{2}$`)
+	categories    = []string{"cdn", "cloud", "dns", "email", "hosting", "other", "paas", "saas", "security"}
+	httpParts     = []string{"body", "cookie", "header", "redirect_location", "status", "title", "tls_alpn"}
+	identityTypes = []string{"issuer_cn", "issuer_org", "san_suffix", "subject_cn"}
+	slugRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
+	serviceNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	providerKeyRE = regexp.MustCompile(`^[a-z0-9*][a-z0-9.*-]*[a-z0-9*]$`)
+	countryRE     = regexp.MustCompile(`^[A-Z]{2}$`)
 )
 
 type problems struct{ errs []error }
@@ -171,11 +169,11 @@ func validateService(d *Definition, s *ServiceDef, path string, p *problems) {
 		rp := fmt.Sprintf("%s.dns_rules[%d]", path, i)
 		r.RecordType = strings.ToUpper(strings.TrimSpace(r.RecordType))
 		r.MatchField = strings.ToLower(strings.TrimSpace(r.MatchField))
-		if !slices.Contains(dnsRecordTypes, r.RecordType) {
-			p.add(d, rp, "unsupported record_type %q", r.RecordType)
+		if !model.IsDNSRuleKind(r.RecordType, r.MatchField) {
+			p.add(d, rp, "unsupported dns rule kind %s/%s", r.RecordType, r.MatchField)
 		}
-		if !slices.Contains(dnsMatchFields, r.MatchField) {
-			p.add(d, rp, "unsupported match_field %q", r.MatchField)
+		if strings.EqualFold(strings.TrimSpace(r.MatcherType), "exists") {
+			p.add(d, rp, "exists is not meaningful for dns rules")
 		}
 		r.MatcherType, r.Pattern = checkMatcher(d, rp, r.MatcherType, r.Pattern, r.CaseSensitive, p)
 		checkConfidence(d, rp, r.Confidence, p)

@@ -16,29 +16,23 @@ import (
 	"provider_recon/internal/model"
 )
 
-// Kind names what a rule is matched against: a record type plus a field.
-type Kind struct {
-	RecordType string
-	MatchField string
-}
+// Kind names what a rule is matched against: a record type plus a field. It
+// is the model's kind, shared with the definitions validator.
+type Kind = model.DNSRuleKind
 
-func (k Kind) String() string { return k.RecordType + "/" + k.MatchField }
-
-// Rule kinds (spec: "Rule kinds"). Compilation refuses any other kind, so a
-// rule no analyzer handles is rejected at load time instead of ignored.
+// Rule kinds (spec: "Rule kinds"). Compilation refuses any kind outside
+// model.DNSRuleKinds, so a rule no analyzer handles is rejected at load time.
 var (
-	NSTarget     = Kind{"NS", "target"}
-	MXTarget     = Kind{"MX", "target"}
-	CNAMETarget  = Kind{"CNAME", "target"}
-	TXTValue     = Kind{"TXT", "value"}
-	TXTName      = Kind{"TXT", "name"}
-	SPFInclude   = Kind{"SPF", "include"}
-	DKIMSelector = Kind{"DKIM", "selector"}
-	DKIMTarget   = Kind{"DKIM", "target"}
-	DMARCReport  = Kind{"DMARC", "report"}
+	NSTarget     = Kind{RecordType: "NS", MatchField: "target"}
+	MXTarget     = Kind{RecordType: "MX", MatchField: "target"}
+	CNAMETarget  = Kind{RecordType: "CNAME", MatchField: "target"}
+	TXTValue     = Kind{RecordType: "TXT", MatchField: "value"}
+	TXTName      = Kind{RecordType: "TXT", MatchField: "name"}
+	SPFInclude   = Kind{RecordType: "SPF", MatchField: "include"}
+	DKIMSelector = Kind{RecordType: "DKIM", MatchField: "selector"}
+	DKIMTarget   = Kind{RecordType: "DKIM", MatchField: "target"}
+	DMARCReport  = Kind{RecordType: "DMARC", MatchField: "report"}
 )
-
-var knownKinds = []Kind{NSTarget, MXTarget, CNAMETarget, TXTValue, TXTName, SPFInclude, DKIMSelector, DKIMTarget, DMARCReport}
 
 // Match is a rule that matched: the provider service it names.
 type Match struct {
@@ -166,8 +160,11 @@ func (idx *Index) add(d model.Document) error {
 				continue
 			}
 			kind := Kind{strings.ToUpper(r.RecordType), strings.ToLower(r.MatchField)}
-			if !slices.Contains(knownKinds, kind) {
+			if !model.IsDNSRuleKind(kind.RecordType, kind.MatchField) {
 				return fmt.Errorf("provider %q service %q: unsupported rule kind %s", d.Slug, s.Key, kind)
+			}
+			if strings.EqualFold(strings.TrimSpace(r.MatcherType), "exists") {
+				return fmt.Errorf("provider %q service %q: exists is not meaningful for dns rules", d.Slug, s.Key)
 			}
 			id := fmt.Sprintf("%s/%s/%s %s %s", d.Slug, s.Key, kind, r.MatcherType, r.Pattern)
 			pat, err := matcher.Compile(r.MatcherType, r.Pattern, r.CaseSensitive)

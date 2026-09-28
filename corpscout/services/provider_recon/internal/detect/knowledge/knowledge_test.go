@@ -163,6 +163,7 @@ func TestCompileRefusesBadKnowledge(t *testing.T) {
 		"unknown kind":    doc("p", nil, svc("p.a", []string{"cdn"}, rule("A", "value", "exact", "192.0.2.1", 0, 1))),
 		"unknown matcher": doc("p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "wildcard", "*.p.com", 0, 1))),
 		"invalid regex":   doc("p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "regex", "(", 0, 1))),
+		"exists rule":     doc("p", nil, svc("p.a", []string{"dns"}, rule("NS", "target", "exists", "", 0, 1))),
 		"other contract":  other,
 	} {
 		if _, err := Compile([]model.Document{d}); err == nil {

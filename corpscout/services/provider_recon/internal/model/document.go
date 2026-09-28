@@ -19,7 +19,31 @@ const ContractVersion = "provider-recon/v1"
 // ServiceTypes is the closed list of service types a provider service can carry.
 var ServiceTypes = []string{
 	"cdn", "ddos_protection", "dns", "email", "email_security", "email_sending",
-	"hosting", "iaas", "paas", "saas_verification", "waf",
+	"hosting", "iaas", "paas", "saas_verification", "waf", "dmarc_reporting",
+}
+
+// DNSRuleKind is what a DNS rule is matched against: a record type plus a
+// field. The definitions validator and the dns-detect resolver both use
+// DNSRuleKinds, so a definition that validates can always be resolved.
+type DNSRuleKind struct {
+	RecordType string
+	MatchField string
+}
+
+func (k DNSRuleKind) String() string { return k.RecordType + "/" + k.MatchField }
+
+// DNSRuleKinds lists every kind a resolver analyzer evaluates.
+var DNSRuleKinds = []DNSRuleKind{
+	{"NS", "target"}, {"MX", "target"}, {"CNAME", "target"},
+	{"TXT", "value"}, {"TXT", "name"},
+	{"SPF", "include"},
+	{"DKIM", "selector"}, {"DKIM", "target"},
+	{"DMARC", "report"},
+}
+
+// IsDNSRuleKind reports whether (recordType, matchField) is in DNSRuleKinds.
+func IsDNSRuleKind(recordType, matchField string) bool {
+	return slices.Contains(DNSRuleKinds, DNSRuleKind{recordType, matchField})
 }
 
 // Traits is the closed list of service traits (vocabulary ported from runner3).
