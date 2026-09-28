@@ -77,3 +77,48 @@ optional `PROVIDER_RECON_BUCKET` (default `provider-recon`).
    - `""` ignores a tag
    - `generic_tags` drops umbrella ranges that repeat a specific tag's CIDR
 4. Run `bin/provider-recon validate`, then a local `collect -provider <slug> -out /tmp/x`.
+
+## dns-detect
+
+Resolves one DNS record at a time into the services it proves: `(service_type,
+provider)` with the evidence and the record's own window. A domain's history
+is a view over the per-record results. Design:
+`docs/superpowers/specs/2026-09-28-dns-detect-service-design.md`.
+
+Packages: `internal/detect/hosts` (normalisation, public-suffix provider keys),
+`internal/detect/knowledge` (index compiled from provider documents over
+`internal/matcher`), `internal/detect/resolve` (routing, analyzers,
+`LabelHost`), and `cmd/dns-detect`.
+
+```bash
+go run ./cmd/dns-detect resolve -knowledge DIR < records.ndjson > results.ndjson
+```
+
+`DIR` holds provider documents as `<slug>.json` (a flattened copy of
+`providers/<slug>/latest.json`). Each input record gives one output line, in
+order:
+
+```json
+{"record_id":"a","root_domain":"a.se","name":"a.se.","type":"NS","value":"ns1.loopia.se.","first_seen":"2026-09-01","last_seen":"2026-09-23"}
+```
+```json
+{"knowledge_version":"sha256:…","record_id":"a","results":[{"record_id":"a","root_domain":"a.se","record_name":"a.se","record_type":"NS","analyzer":"ns","subject":"ns1.loopia.se","service_type":"dns","provider_key":"loopia","provider_slug":"loopia","service_key":"loopia.dns","rule_id":"loopia/loopia.dns/NS/target suffix loopia.se","confidence":1,"fallback":false,"valid_from":"2026-09-01","valid_to":"2026-09-23"}],"findings":[]}
+```
+
+Routing (slice 1):
+- **apex NS**: `ns`, gives `dns`.
+- **apex SOA**: `soa`, the MNAME host, gives `dns` with `fallback: true`.
+- **apex MX**: `mx`, gives `email`. `0 .` is the finding `null_mx`.
+- **apex/www CNAME**: `cname`, gives `hosting` unless a rule says otherwise.
+- **Everything else** gives no result yet.
+
+Fallback rows count only where no non-fallback row of the same service type
+covers the same time. The history view applies that (slice 4).
+
+Without a rule, a host's registrable domain decides:
+- the domain itself gives `self-hosted`;
+- a provider key gives that provider;
+- anything else gives an unmapped key.
+
+Test fixtures in `internal/detect/knowledge/testdata/providers` are real
+documents. Refresh them with the loop in the slices 0–1 plan (Task 2, Step 1).
