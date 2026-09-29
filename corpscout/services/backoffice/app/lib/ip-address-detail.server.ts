@@ -1,9 +1,8 @@
 import { isIP } from "node:net";
 import { chQuery } from "~/lib/clickhouse.server";
 import {
+  DNS_HISTORY_MAX_HOSTNAMES,
   IP_DETAIL_PAGE_SIZE,
-  IP_DETAIL_COUNT_CAP,
-  IP_DNS_PAGE_SIZE,
   type IpDomainScope,
 } from "~/lib/ip-address-detail";
 
@@ -11,9 +10,9 @@ import {
  * Server reads for the backoffice IP address detail page (`/admin/ip-addresses/:address`).
  * Every read of commoncrawl_ip_addresses, ip_enrichment_current and rdap_ip_lookup_results
  * filters on the 256-way address bucket, every read of commoncrawl_domain_ip_connections
- * PREWHEREs on the 64-way segment bucket and segment CIDR, and commoncrawl_domain_dns_records
- * is only ever read with `root_domain = <a root domain of the current page>` (its partition and
- * sort key), never by value alone.
+ * PREWHEREs on the 64-way segment bucket and segment CIDR and pages by keyset (no OFFSET, no
+ * count), and commoncrawl_domain_dns_records is read only on demand for ONE root domain
+ * (`root_domain =`, its partition and sort key), never by value alone.
  */
 
 export interface ResolvedIpAddress {
@@ -176,32 +175,34 @@ export interface IpDomainConnection {
   lastSeen: string;
 }
 
-export interface CappedCount {
-  count: number;
-  capped: boolean;
-}
-
 export interface IpHistoryCoverage {
   completedPartitions: number;
   totalPartitions: number;
 }
 
-export interface IpAddressDomains {
+/** Keyset paging state shared by the DNS and Domains tabs. */
+export interface IpKeysetPage {
+  /** The cursor this page starts after ("" on the first page). */
+  after: string;
+  /** The cursor of the next page, or null on the last page. */
+  next: string | null;
+  pageSize: number;
+  /** Exact only when everything fits on the first page; otherwise unknown ("50+"). */
+  total: number | null;
+}
+
+export interface IpAddressDomains extends IpKeysetPage {
   address: ResolvedIpAddress;
   scope: IpDomainScope;
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-  total: CappedCount | null;
   connections: IpDomainConnection[];
   coverage: IpHistoryCoverage;
 }
 
-export interface IpDnsRecord {
-  hostname: string;
+/** One root domain with the hostnames whose A/AAAA record points at the address. */
+export interface IpDnsDomainGroup {
   rootDomain: string;
-  type: string;
-  value: string;
+  type: "A" | "AAAA";
+  hostnames: string[];
   sources: string[];
   discoveries: string[];
   seenDates: number;
@@ -209,16 +210,22 @@ export interface IpDnsRecord {
   lastSeen: string;
 }
 
-export interface IpAddressDnsRecords {
+export interface IpAddressDnsRecords extends IpKeysetPage {
   address: ResolvedIpAddress;
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-  /** Root domains on this page (one connection row each). */
-  rootDomains: string[];
-  total: CappedCount | null;
-  records: IpDnsRecord[];
+  domains: IpDnsDomainGroup[];
   coverage: IpHistoryCoverage;
+}
+
+/** One record-level row from commoncrawl_domain_dns_records (on-demand history). */
+export interface IpDnsRecord {
+  hostname: string;
+  type: string;
+  value: string;
+  sources: string[];
+  discoveries: string[];
+  seenDates: number;
+  firstSeen: string;
+  lastSeen: string;
 }
 
 // One statement per family so no conversion runs on the other family's text.
@@ -263,9 +270,26 @@ export async function resolveIpAddress(
   };
 }
 
+/**
+ * For child loaders: 404 on an invalid address, null when the address is valid but not in its
+ * canonical form (the parent loader redirects; the child skips its reads).
+ */
+export async function resolveCanonicalIpAddress(
+  raw: string,
+): Promise<ResolvedIpAddress | null> {
+  const address = await resolveIpAddress(raw);
+  if (!address) throw new Response("Not found", { status: 404 });
+  return address.ip === raw ? address : null;
+}
+
 function addressParams(address: ResolvedIpAddress) {
   return { bucket: address.bucket, ip: address.ip, version: address.version };
 }
+
+// Point reads (one bucket + ip key) prefetch their few granules in parallel; the in-order page
+// reads over commoncrawl_domain_ip_connections keep the default settings.
+const POINT_READ_SETTINGS =
+  "allow_prefetched_read_pool_for_local_filesystem=1, local_filesystem_read_prefetch=1, max_threads=16";
 
 const HEADER_OBSERVATION_SQL = `SELECT
   toString(min(first_seen)) AS first_seen,
@@ -274,43 +298,28 @@ FROM commoncrawl_ip_addresses
 WHERE bucket = {bucket:UInt16}
   AND ip_version = {version:UInt8}
   AND ip = {ip:String}
-HAVING count() > 0`;
-
-const HEADER_STATUS_SQL = `SELECT
-  toString(city_lookup_status) AS city_lookup_status,
-  toString(asn_lookup_status) AS asn_lookup_status,
-  toString(rdap_lookup_status) AS rdap_lookup_status
-FROM ip_enrichment_current
-WHERE bucket = {bucket:UInt16}
-  AND ip = {ip:String}
-LIMIT 1
-SETTINGS optimize_move_to_prewhere_if_final=1`;
+HAVING count() > 0
+SETTINGS ${POINT_READ_SETTINGS}`;
 
 export async function getIpAddressHeader(
   address: ResolvedIpAddress,
 ): Promise<IpAddressHeader> {
-  const params = addressParams(address);
-  const [observations, statuses] = await Promise.all([
+  const [observations, enrichment] = await Promise.all([
     chQuery<{ first_seen: string; last_seen: string }>(
       HEADER_OBSERVATION_SQL,
-      params,
+      addressParams(address),
     ),
-    chQuery<{
-      city_lookup_status: LookupStatus;
-      asn_lookup_status: LookupStatus;
-      rdap_lookup_status: LookupStatus;
-    }>(HEADER_STATUS_SQL, params),
+    loadEnrichmentRow(address),
   ]);
-  const status = statuses[0];
   return {
     address,
     firstSeen: observations[0]?.first_seen ?? null,
     lastSeen: observations[0]?.last_seen ?? null,
-    statuses: status
+    statuses: enrichment
       ? {
-          city: status.city_lookup_status,
-          asn: status.asn_lookup_status,
-          rdap: status.rdap_lookup_status,
+          city: enrichment.city_lookup_status,
+          asn: enrichment.asn_lookup_status,
+          rdap: enrichment.rdap_lookup_status,
         }
       : null,
   };
@@ -370,12 +379,13 @@ const OVERVIEW_SQL = `SELECT
   rdap_country_code,
   toString(rdap_registration_date) AS rdap_registration_date,
   toString(rdap_last_changed_at) AS rdap_last_changed_at,
-  rdap_self_url
+  rdap_self_url,
+  rdap_parent_network_key
 FROM ip_enrichment_current
 WHERE bucket = {bucket:UInt16}
   AND ip = {ip:String}
 LIMIT 1
-SETTINGS optimize_move_to_prewhere_if_final=1`;
+SETTINGS optimize_move_to_prewhere_if_final=1, ${POINT_READ_SETTINGS}`;
 
 const RDAP_MARKER_SQL = `SELECT
   toString(lookup_status) AS lookup_status,
@@ -387,11 +397,12 @@ FROM rdap_ip_lookup_results_current
 WHERE bucket = {bucket:UInt16}
   AND ip_version = {version:UInt8}
   AND ip = {ip:String}
-LIMIT 1`;
+LIMIT 1
+SETTINGS ${POINT_READ_SETTINGS}`;
 
 type Nullable<T> = T | null;
 
-interface OverviewRow {
+export interface OverviewRow {
   result_id: string;
   task_id: string;
   completed_at: string;
@@ -446,6 +457,42 @@ interface OverviewRow {
   rdap_registration_date: Nullable<string>;
   rdap_last_changed_at: Nullable<string>;
   rdap_self_url: Nullable<string>;
+  rdap_parent_network_key: Nullable<string>;
+}
+
+/** Enrichment rows served within this window reuse one read (header + tab of one request). */
+const ENRICHMENT_TTL_MS = 30_000;
+const enrichmentCache = new Map<
+  string,
+  { expires: number; row: Promise<OverviewRow | null> }
+>();
+
+/**
+ * The one ip_enrichment_current read behind the header, Overview and Registration. Parent and
+ * child loaders of a request run concurrently, so the pending promise is shared, and a short
+ * TTL keeps tab switches from re-reading the view.
+ */
+export function loadEnrichmentRow(
+  address: ResolvedIpAddress,
+): Promise<OverviewRow | null> {
+  const key = `${address.bucket}:${address.ip}`;
+  const now = Date.now();
+  const cached = enrichmentCache.get(key);
+  if (cached && cached.expires > now) return cached.row;
+  for (const [entryKey, entry] of enrichmentCache) {
+    if (entry.expires <= now) enrichmentCache.delete(entryKey);
+  }
+  const row = chQuery<OverviewRow>(OVERVIEW_SQL, addressParams(address)).then(
+    (rows) => rows[0] ?? null,
+  );
+  enrichmentCache.set(key, { expires: now + ENRICHMENT_TTL_MS, row });
+  row.catch(() => enrichmentCache.delete(key));
+  return row;
+}
+
+/** Test hook: forget cached enrichment rows. */
+export function clearEnrichmentCache(): void {
+  enrichmentCache.clear();
 }
 
 function componentStatus(
@@ -522,8 +569,8 @@ export async function getIpAddressOverview(
   address: ResolvedIpAddress,
 ): Promise<IpAddressOverview> {
   const params = addressParams(address);
-  const [overviewRows, markerRows] = await Promise.all([
-    chQuery<OverviewRow>(OVERVIEW_SQL, params),
+  const [enrichment, markerRows] = await Promise.all([
+    loadEnrichmentRow(address),
     chQuery<{
       lookup_status: string;
       network_key: string | null;
@@ -535,7 +582,7 @@ export async function getIpAddressOverview(
   const marker = markerRows[0];
   return {
     address,
-    enrichment: overviewRows[0] ? mapOverview(overviewRows[0]) : null,
+    enrichment: enrichment ? mapOverview(enrichment) : null,
     rdapMarker: marker
       ? {
           status: marker.lookup_status,
@@ -547,13 +594,6 @@ export async function getIpAddressOverview(
       : null,
   };
 }
-
-const REGISTRATION_KEY_SQL = `SELECT rdap_network_key, rdap_matched_cidr
-FROM ip_enrichment_current
-WHERE bucket = {bucket:UInt16}
-  AND ip = {ip:String}
-LIMIT 1
-SETTINGS optimize_move_to_prewhere_if_final=1`;
 
 // Same longest-prefix read as technologyIpRdapSql in queries.server.ts, for one address.
 const TRIE_KEY_SQL_V4 = `SELECT
@@ -582,11 +622,11 @@ const NETWORK_COLUMNS = `network_key,
   up_url,
   toString(registration_date) AS registration_date,
   toString(last_changed_at) AS last_changed_at,
-  toString(fetched_at) AS fetched_at,
-  JSONExtractString(raw_response, 'corpscout', 'source') AS source`;
+  toString(fetched_at) AS fetched_at`;
 
 const NETWORK_SQL = `SELECT
   ${NETWORK_COLUMNS},
+  JSONExtractString(raw_response, 'corpscout', 'source') AS source,
   raw_response
 FROM rdap_networks_current
 WHERE network_key = {networkKey:String}
@@ -643,7 +683,7 @@ interface NetworkRow {
   registration_date: string | null;
   last_changed_at: string | null;
   fetched_at: string;
-  source: string;
+  source?: string;
   raw_response?: string;
 }
 
@@ -668,7 +708,7 @@ function mapNetwork(row: NetworkRow): RdapNetworkRecord {
     registrationDate: row.registration_date,
     lastChangedAt: row.last_changed_at,
     fetchedAt: row.fetched_at,
-    source: row.source,
+    source: row.source ?? "",
   };
 }
 
@@ -680,16 +720,34 @@ function prettyJson(raw: string): string {
   }
 }
 
+type RegistryClassRow = {
+  registry_class: string;
+  covered_rir_blocks: number;
+  iana_designation: string;
+  iana_rir: string;
+  iana_status: string;
+  special_registry: string;
+  special_status: string;
+  classified_at: string;
+};
+
+type SegmentRow = {
+  cidr: string;
+  prefix_length: number;
+  segment_role: string;
+  derived_at: string;
+};
+
 export async function getIpAddressRegistration(
   address: ResolvedIpAddress,
 ): Promise<IpAddressRegistration> {
-  const params = addressParams(address);
-  const keyRows = await chQuery<{
-    rdap_network_key: string | null;
-    rdap_matched_cidr: string | null;
-  }>(REGISTRATION_KEY_SQL, params);
-  let networkKey = keyRows[0]?.rdap_network_key || null;
-  let matchedCidr = keyRows[0]?.rdap_matched_cidr || null;
+  // The network and parent keys come from the shared enrichment row (no extra read).
+  const enrichment = await loadEnrichmentRow(address);
+  let networkKey = enrichment?.rdap_network_key || null;
+  let matchedCidr = enrichment?.rdap_matched_cidr || null;
+  const enrichmentParentKey = networkKey
+    ? enrichment?.rdap_parent_network_key || null
+    : null;
   let keySource: IpAddressRegistration["keySource"] = networkKey
     ? "enrichment"
     : null;
@@ -719,30 +777,27 @@ export async function getIpAddressRegistration(
     };
   }
 
-  const [networkRows, classRows, segmentRows] = await Promise.all([
-    chQuery<NetworkRow>(NETWORK_SQL, { networkKey }),
-    chQuery<{
-      registry_class: string;
-      covered_rir_blocks: number;
-      iana_designation: string;
-      iana_rir: string;
-      iana_status: string;
-      special_registry: string;
-      special_status: string;
-      classified_at: string;
-    }>(REGISTRY_CLASS_SQL, { networkKey }),
-    chQuery<{
-      cidr: string;
-      prefix_length: number;
-      segment_role: string;
-      derived_at: string;
-    }>(SEGMENTS_SQL, { networkKey }),
-  ]);
+  // One parallel batch: network, parent, registry class and segments.
+  const [networkRows, parentBatchRows, classRows, segmentRows] =
+    await Promise.all([
+      chQuery<NetworkRow>(NETWORK_SQL, { networkKey }),
+      enrichmentParentKey
+        ? chQuery<NetworkRow>(PARENT_NETWORK_SQL, {
+            networkKey: enrichmentParentKey,
+          })
+        : Promise.resolve([] as NetworkRow[]),
+      chQuery<RegistryClassRow>(REGISTRY_CLASS_SQL, { networkKey }),
+      chQuery<SegmentRow>(SEGMENTS_SQL, { networkKey }),
+    ]);
   const networkRow = networkRows[0];
-  const parentKey = networkRow?.parent_network_key || null;
-  const parentRows = parentKey
-    ? await chQuery<NetworkRow>(PARENT_NETWORK_SQL, { networkKey: parentKey })
-    : [];
+  // A trie match carries no parent key until its network row is read.
+  const trieParentKey =
+    keySource === "trie" ? networkRow?.parent_network_key || null : null;
+  const parentRows = trieParentKey
+    ? await chQuery<NetworkRow>(PARENT_NETWORK_SQL, {
+        networkKey: trieParentKey,
+      })
+    : parentBatchRows;
   const registryClass = classRows[0];
 
   return {
@@ -777,8 +832,12 @@ export async function getIpAddressRegistration(
   };
 }
 
-// The exact-IP read of technologyExactIpConnectionsSql (queries.server.ts) without the
-// count() OVER () window: one extra row tells whether a next page exists.
+const CONNECTION_PREWHERE = `segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
+  AND segment_cidr = {networkSegment:String}
+  AND ip_version = {version:UInt8}`;
+
+// The exact-IP read of technologyExactIpConnectionsSql (queries.server.ts) with keyset paging
+// on root_domain (the last sort-key column) instead of OFFSET and no count() OVER ().
 const EXACT_CONNECTIONS_SQL = `SELECT
   ip,
   toUInt8(ip_version) AS version,
@@ -789,14 +848,13 @@ const EXACT_CONNECTIONS_SQL = `SELECT
   toString(first_seen) AS first_seen,
   toString(last_seen) AS last_seen
 FROM commoncrawl_domain_ip_connections FINAL
-PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
-  AND segment_cidr = {networkSegment:String}
-  AND ip_version = {version:UInt8}
+PREWHERE ${CONNECTION_PREWHERE}
   AND address = toIPv6({ip:String})
-ORDER BY domain
-LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+  AND root_domain > {after:String}
+ORDER BY root_domain
+LIMIT {limit:UInt32}`;
 
-// The neighbourhood read of technologySegmentIpConnectionsSql (queries.server.ts).
+// The neighbourhood read of technologySegmentIpConnectionsSql, keyset on (address, root_domain).
 const SEGMENT_CONNECTIONS_SQL = `SELECT
   ip,
   toUInt8(ip_version) AS version,
@@ -807,37 +865,42 @@ const SEGMENT_CONNECTIONS_SQL = `SELECT
   toString(first_seen) AS first_seen,
   toString(last_seen) AS last_seen
 FROM commoncrawl_domain_ip_connections FINAL
-PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
-  AND segment_cidr = {networkSegment:String}
-  AND ip_version = {version:UInt8}
+PREWHERE ${CONNECTION_PREWHERE}
+  AND (address, root_domain) > (toIPv6({afterAddress:String}), {afterDomain:String})
 WHERE address != toIPv6({ip:String})
-ORDER BY address, domain
-LIMIT {limit:UInt32} OFFSET {offset:UInt64}`;
+ORDER BY address, root_domain
+LIMIT {limit:UInt32}`;
 
-// A separate count that stops at the cap, instead of a window over the whole set.
-const EXACT_CONNECTIONS_COUNT_SQL = `SELECT toString(count()) AS total
+// The DNS tab: hostnames pointing at the address, one row per hostname, read from the
+// connections table only. Sources, discoveries, dates and the seen count are per root domain.
+const DNS_HOSTNAMES_SQL = `SELECT
+  root_domain,
+  arrayJoin(arraySort(hostnames)) AS hostname,
+  if(ip_version = 4, 'A', 'AAAA') AS type,
+  arraySort(sources) AS sources,
+  arraySort(discoveries) AS discoveries,
+  length(seen_dates) AS seen_dates,
+  toString(first_seen) AS first_seen,
+  toString(last_seen) AS last_seen
 FROM (
-  SELECT 1
+  SELECT ip_version, root_domain, hostnames, sources, discoveries, seen_dates, first_seen, last_seen
   FROM commoncrawl_domain_ip_connections FINAL
-  PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)
-    AND segment_cidr = {networkSegment:String}
-    AND ip_version = {version:UInt8}
+  PREWHERE ${CONNECTION_PREWHERE}
     AND address = toIPv6({ip:String})
-  LIMIT {cap:UInt32}
-)`;
+    AND root_domain > {after:String}
+  ORDER BY root_domain
+  LIMIT {limit:UInt32}
+)
+ORDER BY root_domain, hostname`;
 
 const COVERAGE_SQL = `SELECT
   toString(count()) AS completed_partitions
 FROM commoncrawl_domain_ip_backfill_status FINAL
 WHERE bucket < 16`;
 
-// Record-level rows for one root domain of a connections page. root_domain leads the sort key
-// of commoncrawl_domain_dns_records (and its partition key), so it is always an equality; the
-// connection row's hostnames narrow the read to the (root_domain, name) prefix. One read per
-// page root domain: a single `root_domain IN (...page...)` read measured 17-22 s for five
-// domains on production (2026-09-29) against 1.4-9 s for each equality read.
-const DNS_RECORDS_SQL = `SELECT
-  root_domain,
+// Record-level history for ONE root domain, loaded when its row is expanded. root_domain leads
+// the sort and partition key of commoncrawl_domain_dns_records and is always an equality.
+const DNS_RECORD_HISTORY_SQL = `SELECT
   name AS hostname,
   toString(record_type) AS type,
   toString(value) AS value,
@@ -849,22 +912,22 @@ const DNS_RECORDS_SQL = `SELECT
 FROM commoncrawl_domain_dns_records
 WHERE root_domain = {rootDomain:String}
   AND name IN {hostnames:Array(String)}
-  AND record_type = {recordType:String}
+  AND record_type_code = {code:UInt16}
   AND if(
-    record_type = 'A',
+    {code:UInt16} = 1,
     toIPv6(toString(assumeNotNull(toIPv4OrNull(value)))),
     assumeNotNull(toIPv6OrNull(value))
   ) = toIPv6({ip:String})
-GROUP BY root_domain, name, record_type, value
-ORDER BY root_domain, hostname`;
+GROUP BY name, record_type, value
+ORDER BY hostname, value`;
 
-function clampPage(value: number | undefined): number {
-  return Number.isSafeInteger(value) && (value as number) > 0
-    ? (value as number)
-    : 1;
-}
+// Same, for a root domain whose hostname list is too long to pass (root_domain = only).
+const DNS_RECORD_HISTORY_ALL_NAMES_SQL = DNS_RECORD_HISTORY_SQL.replace(
+  "  AND name IN {hostnames:Array(String)}\n",
+  "",
+);
 
-function mapConnection(row: {
+interface ConnectionRow {
   ip: string;
   version: number;
   domain: string;
@@ -873,7 +936,9 @@ function mapConnection(row: {
   discoveries: string[];
   first_seen: string;
   last_seen: string;
-}): IpDomainConnection {
+}
+
+function mapConnection(row: ConnectionRow): IpDomainConnection {
   return {
     ip: row.ip,
     version: Number(row.version),
@@ -886,44 +951,33 @@ function mapConnection(row: {
   };
 }
 
-type ConnectionRow = Parameters<typeof mapConnection>[0];
-
-async function loadConnectionsPage(
-  address: ResolvedIpAddress,
-  scope: IpDomainScope,
-  page: number,
-  pageSize: number = IP_DETAIL_PAGE_SIZE,
-) {
-  const rows = await chQuery<ConnectionRow>(
-    scope === "segment" ? SEGMENT_CONNECTIONS_SQL : EXACT_CONNECTIONS_SQL,
-    {
-      ip: address.ip,
-      version: address.version,
-      networkSegment: address.networkSegment,
-      limit: pageSize + 1,
-      offset: (page - 1) * pageSize,
-    },
-  );
+/**
+ * Trims a limit+1 read to one page. hasMore only when the extra row exists, so a page of
+ * exactly pageSize rows is the last one.
+ */
+export function keysetPage<T>(
+  rows: T[],
+  pageSize: number,
+  after: string,
+  cursorOf: (row: T) => string,
+): { rows: T[] } & Omit<IpKeysetPage, "pageSize"> {
+  const hasMore = rows.length > pageSize;
+  const pageRows = rows.slice(0, pageSize);
   return {
-    hasMore: rows.length > pageSize,
-    rows: rows.slice(0, pageSize),
+    rows: pageRows,
+    after,
+    next: hasMore && pageRows.length ? cursorOf(pageRows[pageRows.length - 1]) : null,
+    total: !after && !hasMore ? pageRows.length : null,
   };
 }
 
-async function loadExactCount(
-  address: ResolvedIpAddress,
-): Promise<CappedCount> {
-  const rows = await chQuery<{ total: string }>(EXACT_CONNECTIONS_COUNT_SQL, {
-    ip: address.ip,
-    version: address.version,
-    networkSegment: address.networkSegment,
-    cap: IP_DETAIL_COUNT_CAP + 1,
-  });
-  const total = Number(rows[0]?.total ?? 0);
-  return {
-    count: Math.min(total, IP_DETAIL_COUNT_CAP),
-    capped: total > IP_DETAIL_COUNT_CAP,
-  };
+/** Segment cursors are "<ip>|<root domain>"; anything malformed starts at the first page. */
+function parseSegmentCursor(after: string): { address: string; domain: string } | null {
+  const split = after.indexOf("|");
+  if (split <= 0) return null;
+  const address = after.slice(0, split);
+  if (!isIP(address)) return null;
+  return { address, domain: after.slice(split + 1) };
 }
 
 async function loadCoverage(): Promise<IpHistoryCoverage> {
@@ -934,107 +988,147 @@ async function loadCoverage(): Promise<IpHistoryCoverage> {
   };
 }
 
+function connectionParams(address: ResolvedIpAddress) {
+  return {
+    ip: address.ip,
+    version: address.version,
+    networkSegment: address.networkSegment,
+  };
+}
+
 export async function getIpAddressDomains(
   address: ResolvedIpAddress,
-  opts: { page?: number; scope?: IpDomainScope } = {},
+  opts: { after?: string; scope?: IpDomainScope } = {},
 ): Promise<IpAddressDomains> {
   const scope: IpDomainScope = opts.scope === "segment" ? "segment" : "exact";
-  const page = clampPage(opts.page);
-  const [connections, total, coverage] = await Promise.all([
-    loadConnectionsPage(address, scope, page),
-    scope === "exact" ? loadExactCount(address) : Promise.resolve(null),
-    loadCoverage(),
-  ]);
+  let after = (opts.after ?? "").slice(0, 600);
+  const segmentCursor = scope === "segment" ? parseSegmentCursor(after) : null;
+  if (scope === "segment" && !segmentCursor) after = "";
+  const read =
+    scope === "segment"
+      ? chQuery<ConnectionRow>(SEGMENT_CONNECTIONS_SQL, {
+          ...connectionParams(address),
+          afterAddress: segmentCursor?.address ?? "::",
+          afterDomain: segmentCursor?.domain ?? "",
+          limit: IP_DETAIL_PAGE_SIZE + 1,
+        })
+      : chQuery<ConnectionRow>(EXACT_CONNECTIONS_SQL, {
+          ...connectionParams(address),
+          after,
+          limit: IP_DETAIL_PAGE_SIZE + 1,
+        });
+  const [rows, coverage] = await Promise.all([read, loadCoverage()]);
+  const page = keysetPage(rows, IP_DETAIL_PAGE_SIZE, after, (row) =>
+    scope === "segment" ? `${row.ip}|${row.domain}` : row.domain,
+  );
   return {
     address,
     scope,
-    page,
+    after: page.after,
+    next: page.next,
+    total: page.total,
     pageSize: IP_DETAIL_PAGE_SIZE,
-    hasMore: connections.hasMore,
-    total,
-    connections: connections.rows.map(mapConnection),
+    connections: page.rows.map(mapConnection),
     coverage,
   };
 }
 
-interface DnsRecordRow {
+interface DnsHostnameRow {
   root_domain: string;
   hostname: string;
-  type: string;
-  value: string;
+  type: "A" | "AAAA";
   sources: string[];
   discoveries: string[];
-  seen_dates: number;
+  seen_dates: number | string;
   first_seen: string;
   last_seen: string;
 }
 
-/** Page root domains read at once; each read is one root_domain key range. */
-const DNS_RECORD_CONCURRENCY = 5;
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  run: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        results[index] = await run(items[index]);
-      }
-    }),
-  );
-  return results;
-}
-
 export async function getIpAddressDnsRecords(
   address: ResolvedIpAddress,
-  opts: { page?: number } = {},
+  opts: { after?: string } = {},
 ): Promise<IpAddressDnsRecords> {
-  const page = clampPage(opts.page);
-  const [connections, total, coverage] = await Promise.all([
-    loadConnectionsPage(address, "exact", page, IP_DNS_PAGE_SIZE),
-    loadExactCount(address),
+  const after = (opts.after ?? "").slice(0, 300);
+  const [rows, coverage] = await Promise.all([
+    chQuery<DnsHostnameRow>(DNS_HOSTNAMES_SQL, {
+      ...connectionParams(address),
+      after,
+      limit: IP_DETAIL_PAGE_SIZE + 1,
+    }),
     loadCoverage(),
   ]);
-  const rootDomains = Array.from(
-    new Set(connections.rows.map((row) => row.domain)),
-  );
-  const recordType = address.version === 4 ? "A" : "AAAA";
-  const recordRows = (
-    await mapWithConcurrency(
-      connections.rows.filter((row) => row.hostnames?.length),
-      DNS_RECORD_CONCURRENCY,
-      (row) =>
-        chQuery<DnsRecordRow>(DNS_RECORDS_SQL, {
-          rootDomain: row.domain,
-          hostnames: row.hostnames,
-          recordType,
-          ip: address.ip,
-        }),
-    )
-  ).flat();
-  return {
-    address,
-    page,
-    pageSize: IP_DNS_PAGE_SIZE,
-    hasMore: connections.hasMore,
-    rootDomains,
-    total,
-    records: recordRows.map((row) => ({
-      hostname: row.hostname,
+  const groups = new Map<string, IpDnsDomainGroup>();
+  for (const row of rows) {
+    const group = groups.get(row.root_domain);
+    if (group) {
+      group.hostnames.push(row.hostname);
+      continue;
+    }
+    groups.set(row.root_domain, {
       rootDomain: row.root_domain,
       type: row.type,
-      value: row.value,
+      hostnames: [row.hostname],
       sources: row.sources ?? [],
       discoveries: row.discoveries ?? [],
       seenDates: Number(row.seen_dates ?? 0),
       firstSeen: row.first_seen,
       lastSeen: row.last_seen,
-    })),
+    });
+  }
+  const page = keysetPage(
+    [...groups.values()],
+    IP_DETAIL_PAGE_SIZE,
+    after,
+    (group) => group.rootDomain,
+  );
+  return {
+    address,
+    after: page.after,
+    next: page.next,
+    total: page.total,
+    pageSize: IP_DETAIL_PAGE_SIZE,
+    domains: page.rows,
     coverage,
   };
+}
+
+/** Record-level rows for one root domain's hostnames pointing at the address. */
+export async function getIpDnsRecordHistory(
+  address: ResolvedIpAddress,
+  rootDomain: string,
+  hostnames: string[],
+): Promise<IpDnsRecord[]> {
+  const names = [...new Set(hostnames.filter((name) => name && name.length <= 253))];
+  const rows = await chQuery<{
+    hostname: string;
+    type: string;
+    value: string;
+    sources: string[];
+    discoveries: string[];
+    seen_dates: number | string;
+    first_seen: string;
+    last_seen: string;
+  }>(
+    names.length && names.length <= DNS_HISTORY_MAX_HOSTNAMES
+      ? DNS_RECORD_HISTORY_SQL
+      : DNS_RECORD_HISTORY_ALL_NAMES_SQL,
+    {
+      rootDomain,
+      ...(names.length && names.length <= DNS_HISTORY_MAX_HOSTNAMES
+        ? { hostnames: names }
+        : {}),
+      code: address.version === 4 ? 1 : 28,
+      ip: address.ip,
+    },
+  );
+  return rows.map((row) => ({
+    hostname: row.hostname,
+    type: row.type,
+    value: row.value,
+    sources: row.sources ?? [],
+    discoveries: row.discoveries ?? [],
+    seenDates: Number(row.seen_dates ?? 0),
+    firstSeen: row.first_seen,
+    lastSeen: row.last_seen,
+  }));
 }

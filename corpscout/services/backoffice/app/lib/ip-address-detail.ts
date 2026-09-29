@@ -3,12 +3,10 @@
 
 export const IP_DETAIL_PAGE_SIZE = 50;
 /**
- * Root domains per DNS-records page. Each one is a separate commoncrawl_domain_dns_records
- * read (1.4-9 s each on production, 2026-09-29), so the page stays small.
+ * Hostnames the DNS history link passes at most; a root domain with more is read by
+ * `root_domain =` alone.
  */
-export const IP_DNS_PAGE_SIZE = 10;
-/** The DNS and domain counts stop here and render as "10,000+". */
-export const IP_DETAIL_COUNT_CAP = 10_000;
+export const DNS_HISTORY_MAX_HOSTNAMES = 200;
 
 export type IpDomainScope = "exact" | "segment";
 
@@ -43,15 +41,26 @@ export function rdapSourceLabel(source: string): string {
   return "RDAP";
 }
 
-export function parsePage(value: string | null): number {
-  const page = Number(value ?? "1");
-  return Number.isSafeInteger(page) && page > 0 ? page : 1;
+/** Keyset cursor from `?after=`; bounded so a pasted URL cannot grow the query. */
+export function parseAfter(value: string | null): string {
+  return (value ?? "").slice(0, 600);
 }
 
 export function parseDomainScope(value: string | null): IpDomainScope {
   return value === "segment" ? "segment" : "exact";
 }
 
-export function formatCappedCount(count: number, capped: boolean): string {
-  return `${count.toLocaleString("en-US")}${capped ? "+" : ""}`;
+/** "12" when the page holds everything, "50+" when a next page exists. */
+export function formatPageTotal(
+  total: number | null,
+  shown: number,
+): string {
+  return total === null ? `${shown.toLocaleString("en-US")}+` : total.toLocaleString("en-US");
+}
+
+export function ipDnsHistoryHref(ip: string, rootDomain: string, hostnames: string[]): string {
+  const params = new URLSearchParams();
+  for (const hostname of hostnames) params.append("h", hostname);
+  const query = params.toString();
+  return `/admin/ip-addresses/${encodeURIComponent(ip)}/dns/${encodeURIComponent(rootDomain)}${query ? `?${query}` : ""}`;
 }

@@ -1,16 +1,22 @@
+import { isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/admin-ip-address-dns";
-import { IpDnsRecordsView } from "~/components/admin/ip-address-detail";
-import { parsePage } from "~/lib/ip-address-detail";
-import { getIpAddressDnsRecords, resolveIpAddress } from "~/lib/ip-address-detail.server";
+import { IpDnsRecordsView, IpTabError } from "~/components/admin/ip-address-detail";
+import { parseAfter } from "~/lib/ip-address-detail";
+import { getIpAddressDnsRecords, resolveCanonicalIpAddress } from "~/lib/ip-address-detail.server";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
-  const address = await resolveIpAddress(params.address);
-  if (!address) throw new Response("Not found", { status: 404 });
+  const address = await resolveCanonicalIpAddress(params.address);
+  if (!address) return null; // the parent loader redirects to the canonical address
   return getIpAddressDnsRecords(address, {
-    page: parsePage(new URL(request.url).searchParams.get("page")),
+    after: parseAfter(new URL(request.url).searchParams.get("after")),
   });
 }
 
 export default function IpAddressDnsPage({ loaderData }: Route.ComponentProps) {
-  return <IpDnsRecordsView data={loaderData} />;
+  return loaderData ? <IpDnsRecordsView data={loaderData} /> : null;
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  const status = isRouteErrorResponse(error) ? error.status : null;
+  return <IpTabError status={status} message="This tab could not be loaded." />;
 }

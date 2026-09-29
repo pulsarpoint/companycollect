@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight, CircleAlert } from "lucide-react";
-import type { ReactNode } from "react";
-import { Link, NavLink, useLocation } from "react-router";
+import { ChevronDown, ChevronRight, ChevronsLeft, CircleAlert } from "lucide-react";
+import { Fragment, useState, type ReactNode } from "react";
+import { Link, NavLink, useFetcher, useLocation } from "react-router";
 import { formatObservedAt } from "~/components/detail/technology-infrastructure-section";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -38,15 +38,19 @@ import type {
   IpAddressOverview,
   IpAddressRegistration,
   IpComponentStatus,
+  IpDnsDomainGroup,
+  IpDnsRecord,
   IpHistoryCoverage,
   LookupStatus,
   RdapNetworkRecord,
 } from "~/lib/ip-address-detail.server";
 import {
-  formatCappedCount,
+  DNS_HISTORY_MAX_HOSTNAMES,
+  formatPageTotal,
   IP_DETAIL_TABS,
   type IpDetailTab,
   ipAddressDetailHref,
+  ipDnsHistoryHref,
   ipEnrichmentTaskHref,
   rdapSourceLabel,
 } from "~/lib/ip-address-detail";
@@ -145,22 +149,25 @@ function CoverageNotice({ coverage }: { coverage: IpHistoryCoverage }) {
   );
 }
 
-function PageControls({
-  page,
-  hasMore,
+function KeysetControls({
+  after,
+  next,
   summary,
 }: {
-  page: number;
-  hasMore: boolean;
+  after: string;
+  next: string | null;
   summary: string;
 }) {
   const location = useLocation();
-  function href(next: number) {
+  function href(cursor: string) {
     const search = new URLSearchParams(location.search);
-    if (next === 1) search.delete("page");
-    else search.set("page", String(next));
+    if (cursor) search.set("after", cursor);
+    else search.delete("after");
     const query = search.toString();
     return `${location.pathname}${query ? `?${query}` : ""}`;
+  }
+  if (!after && !next) {
+    return <p className="text-muted-foreground text-sm tabular-nums">{summary}</p>;
   }
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -169,25 +176,43 @@ function PageControls({
         <Button
           variant="outline"
           size="sm"
-          disabled={page <= 1}
-          render={page > 1 ? <Link to={href(page - 1)} preventScrollReset /> : undefined}
-          nativeButton={page <= 1}
+          disabled={!after}
+          render={after ? <Link to={href("")} preventScrollReset /> : undefined}
+          nativeButton={!after}
         >
-          <ChevronLeft data-icon="inline-start" />
-          Previous
+          <ChevronsLeft data-icon="inline-start" />
+          First page
         </Button>
         <Button
           variant="outline"
           size="sm"
-          disabled={!hasMore}
-          render={hasMore ? <Link to={href(page + 1)} preventScrollReset /> : undefined}
-          nativeButton={!hasMore}
+          disabled={!next}
+          render={next ? <Link to={href(next)} preventScrollReset /> : undefined}
+          nativeButton={!next}
         >
           Next
           <ChevronRight data-icon="inline-end" />
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Tab-level error: the header and tabs stay, only the tab body is replaced. */
+export function IpTabError({ status, message }: { status: number | null; message: string }) {
+  const timedOut = status === null || status >= 500;
+  return (
+    <Alert variant="destructive">
+      <CircleAlert />
+      <AlertTitle>
+        {status === 404 ? "Not found" : timedOut ? "This tab could not be loaded" : `Error ${status}`}
+      </AlertTitle>
+      <AlertDescription>
+        {timedOut
+          ? "The query timed out or failed. This IP may have too many connections, or the database is busy. Try again in a moment."
+          : message}
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -631,20 +656,103 @@ export function IpRegistrationView({ data }: { data: IpAddressRegistration }) {
 
 // ---------- DNS records ----------
 
+function DnsRecordHistory({
+  ip,
+  group,
+  columns,
+}: {
+  ip: string;
+  group: IpDnsDomainGroup;
+  columns: number;
+}) {
+  const fetcher = useFetcher<{ records: IpDnsRecord[] | null }>();
+  const [open, setOpen] = useState(false);
+  const hostnames =
+    group.hostnames.length <= DNS_HISTORY_MAX_HOSTNAMES ? group.hostnames : [];
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && fetcher.state === "idle" && !fetcher.data?.records) {
+      void fetcher.load(ipDnsHistoryHref(ip, group.rootDomain, hostnames));
+    }
+  }
+  return (
+    <>
+      <TableRow>
+        <TableCell colSpan={columns} className="bg-muted/30 py-1.5">
+          <Button variant="ghost" size="sm" onClick={toggle} aria-expanded={open}>
+            {open ? <ChevronDown data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />}
+            Record history for {group.rootDomain}
+          </Button>
+        </TableCell>
+      </TableRow>
+      {open ? (
+        <TableRow>
+          <TableCell colSpan={columns} className="whitespace-normal">
+            {fetcher.state !== "idle" ? (
+              <p className="text-muted-foreground text-sm">Loading record history…</p>
+            ) : fetcher.data?.records ? (
+              fetcher.data.records.length ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Hostname</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>First seen (UTC)</TableHead>
+                      <TableHead>Last seen (UTC)</TableHead>
+                      <TableHead className="text-right">Seen dates</TableHead>
+                      <TableHead>Sources / discoveries</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {fetcher.data.records.map((record) => (
+                      <TableRow key={`${record.hostname}:${record.value}`}>
+                        <TableCell className="break-all font-mono text-xs">{record.hostname}</TableCell>
+                        <TableCell className="font-mono text-xs">{record.value}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs tabular-nums">
+                          {formatObservedAt(record.firstSeen)}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs tabular-nums">
+                          {formatObservedAt(record.lastSeen)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {numberFormat.format(record.seenDates)}
+                        </TableCell>
+                        <TableCell>
+                          <EvidenceBadges sources={record.sources} discoveries={record.discoveries} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-muted-foreground text-sm">No record-level rows are indexed.</p>
+              )
+            ) : (
+              <p className="text-destructive text-sm">
+                Record history could not be loaded. Collapse and expand to retry.
+              </p>
+            )}
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
+  );
+}
+
 export function IpDnsRecordsView({ data }: { data: IpAddressDnsRecords }) {
-  const summary = data.total
-    ? `${formatCappedCount(data.total.count, data.total.capped)} root domain${data.total.count === 1 && !data.total.capped ? "" : "s"} · page ${numberFormat.format(data.page)}`
-    : `Page ${numberFormat.format(data.page)}`;
+  const summary = `${formatPageTotal(data.total, data.domains.length)} root domain${data.total === 1 ? "" : "s"}${data.after ? " (later page)" : ""}`;
+  const columns = 7;
   return (
     <div className="flex flex-col gap-4">
       <CoverageNotice coverage={data.coverage} />
       <p className="text-muted-foreground text-sm">
-        {data.address.version === 4 ? "A" : "AAAA"} records whose value is{" "}
-        <span className="text-foreground font-mono">{data.address.ip}</span>, for{" "}
-        {numberFormat.format(data.rootDomains.length)} root domain
-        {data.rootDomains.length === 1 ? "" : "s"} on this page.
+        Hostnames whose {data.address.version === 4 ? "A" : "AAAA"} record points to{" "}
+        <span className="text-foreground font-mono">{data.address.ip}</span>. Dates, seen
+        count and sources are per root domain; expand a root domain for its record-level
+        history.
       </p>
-      {data.records.length ? (
+      {data.domains.length ? (
         <div className="overflow-hidden rounded-xl border">
           <Table>
             <TableHeader>
@@ -659,42 +767,46 @@ export function IpDnsRecordsView({ data }: { data: IpAddressDnsRecords }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.records.map((record) => (
-                <TableRow key={`${record.rootDomain}:${record.hostname}:${record.type}:${record.value}`}>
-                  <TableCell className="max-w-sm whitespace-normal break-all font-mono text-xs">
-                    {record.hostname}
-                  </TableCell>
-                  <TableCell>
-                    <DomainLink domain={record.rootDomain} />
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{record.type}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs tabular-nums">
-                    {formatObservedAt(record.firstSeen)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs tabular-nums">
-                    {formatObservedAt(record.lastSeen)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {numberFormat.format(record.seenDates)}
-                  </TableCell>
-                  <TableCell className="max-w-xs whitespace-normal">
-                    <EvidenceBadges sources={record.sources} discoveries={record.discoveries} />
-                  </TableCell>
-                </TableRow>
+              {data.domains.map((group) => (
+                <Fragment key={group.rootDomain}>
+                  {group.hostnames.map((hostname) => (
+                    <TableRow key={`${group.rootDomain}:${hostname}`}>
+                      <TableCell className="max-w-sm whitespace-normal break-all font-mono text-xs">
+                        {hostname}
+                      </TableCell>
+                      <TableCell>
+                        <DomainLink domain={group.rootDomain} />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{group.type}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs tabular-nums">
+                        {formatObservedAt(group.firstSeen)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs tabular-nums">
+                        {formatObservedAt(group.lastSeen)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {numberFormat.format(group.seenDates)}
+                      </TableCell>
+                      <TableCell className="max-w-xs whitespace-normal">
+                        <EvidenceBadges sources={group.sources} discoveries={group.discoveries} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <DnsRecordHistory ip={data.address.ip} group={group} columns={columns} />
+                </Fragment>
               ))}
             </TableBody>
           </Table>
         </div>
       ) : (
-        <EmptyState title="No DNS records">
-          {data.rootDomains.length
-            ? "The indexed domains on this page have no record-level rows for this address."
-            : "No A or AAAA record pointing to this address is indexed."}
+        <EmptyState title="No hostnames">
+          No A or AAAA record pointing to this address is indexed
+          {data.after ? " after this point" : ""}.
         </EmptyState>
       )}
-      <PageControls page={data.page} hasMore={data.hasMore} summary={summary} />
+      <KeysetControls after={data.after} next={data.next} summary={summary} />
     </div>
   );
 }
@@ -703,10 +815,7 @@ export function IpDnsRecordsView({ data }: { data: IpAddressDnsRecords }) {
 
 export function IpDomainsView({ data }: { data: IpAddressDomains }) {
   const segmentLabel = data.address.version === 4 ? "/24" : "/48";
-  const summary =
-    data.scope === "exact" && data.total
-      ? `${formatCappedCount(data.total.count, data.total.capped)} domain${data.total.count === 1 && !data.total.capped ? "" : "s"} · page ${numberFormat.format(data.page)}`
-      : `Page ${numberFormat.format(data.page)}`;
+  const summary = `${formatPageTotal(data.total, data.connections.length)} ${data.scope === "segment" ? "neighbour connection" : "domain"}${data.total === 1 ? "" : "s"}${data.after ? " (later page)" : ""}`;
   const base = ipAddressDetailHref(data.address.ip, "domains");
   return (
     <div className="flex flex-col gap-4">
@@ -798,7 +907,7 @@ export function IpDomainsView({ data }: { data: IpAddressDomains }) {
             : `No other address in this ${segmentLabel} segment has indexed domains.`}
         </EmptyState>
       )}
-      <PageControls page={data.page} hasMore={data.hasMore} summary={summary} />
+      <KeysetControls after={data.after} next={data.next} summary={summary} />
     </div>
   );
 }

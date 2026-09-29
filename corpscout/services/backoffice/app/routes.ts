@@ -105,6 +105,11 @@ export default [
     route("domains", "routes/admin-domains.tsx"),
     route("ip-addresses", "routes/admin-ip-addresses.tsx"),
     route("ip-addresses/statistics", "routes/admin-ip-address-statistics.ts"),
+    // Resource route for the DNS tab's on-demand record history (JSON, no layout).
+    route(
+      "ip-addresses/:address/dns/:rootDomain",
+      "routes/admin-ip-address-dns-history.ts",
+    ),
     // The static statistics segment above outranks this dynamic one.
     route("ip-addresses/:address", "routes/admin-ip-address.tsx", [
       index("routes/admin-ip-address-index.ts"),

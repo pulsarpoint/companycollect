@@ -1,7 +1,15 @@
-import { Link, Outlet, redirect, useLocation, useNavigation } from "react-router";
+import {
+  isRouteErrorResponse,
+  Link,
+  Outlet,
+  redirect,
+  useLocation,
+  useNavigation,
+  useParams,
+} from "react-router";
 import type { Route } from "./+types/admin-ip-address";
 import { formatObservedAt } from "~/components/detail/technology-infrastructure-section";
-import { IpDetailTabs, LookupStatusBadge } from "~/components/admin/ip-address-detail";
+import { IpDetailTabs, IpTabError, LookupStatusBadge } from "~/components/admin/ip-address-detail";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
 import { ipAddressDetailHref, ipDetailTabFromPath } from "~/lib/ip-address-detail";
@@ -61,6 +69,25 @@ export default function AdminIpAddress({ loaderData }: Route.ComponentProps) {
       </header>
       <IpDetailTabs ip={address.ip} tab={ipDetailTabFromPath(location.pathname)} />
       <Outlet />
+    </div>
+  );
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  const params = useParams();
+  const status = isRouteErrorResponse(error) ? error.status : null;
+  return (
+    <div className="flex flex-col gap-6 p-4 md:p-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <h1 className="break-all font-mono text-2xl font-semibold">{params.address ?? "IP address"}</h1>
+        <Link className={buttonVariants({ variant: "ghost", size: "sm" })} to="/admin/ip-addresses">
+          All IP addresses
+        </Link>
+      </header>
+      <IpTabError
+        status={status}
+        message={status === 404 ? "This is not a valid IP address." : "The page could not be loaded."}
+      />
     </div>
   );
 }
