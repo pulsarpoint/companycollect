@@ -84,6 +84,12 @@ def _chunks(rows: Iterable, size: int) -> Iterator[list[dict]]:
         yield chunk
 
 
+def read_watermark(reader, bucket: int):
+    """The bucket's newest load time. Params are passed (even empty) so the
+    driver renders the SQL's %% as %."""
+    return reader.execute(sql.watermark_sql(RESOLVED_DATABASE, bucket), {})[0][0]
+
+
 def selection_since(previous: dict | None, versions: dict) -> str | None:
     """The watermark an incremental run may use, or None for a full selection:
     only when the last successful run recorded one under the same knowledge
@@ -165,7 +171,7 @@ def dns_record_services_clickhouse(
     with clickhouse.get_connection() as reader, clickhouse.get_connection() as writer:
         # Snapshot the watermark before selecting: anything loaded later is
         # newer than it and is picked up by the next run.
-        latest = reader.execute(sql.watermark_sql(RESOLVED_DATABASE, bucket))[0][0]
+        latest = read_watermark(reader, bucket)
         context.log.info("bucket %d: %s selection%s", bucket, "incremental" if since else "full", f" since {since}" if since else "")
         counts = resolve_partition(reader, writer, dns_detect, bucket, context.log, versions=versions, since=since)
     seconds = (datetime.now(UTC) - started).total_seconds()

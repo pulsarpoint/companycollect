@@ -267,3 +267,16 @@ def test_asset_goes_incremental_after_a_successful_run_under_the_same_versions()
     query, params = reader.queries[0]
     assert result.metadata["mode"] == "incremental"
     assert params["since"] == "2026-09-28 20:00:00.000" and "last_loaded_at >" in query
+
+
+def test_watermark_query_is_executed_with_params_so_the_driver_renders_modulo() -> None:
+    calls = []
+
+    class Reader:
+        def execute(self, query, params=None, **_):
+            calls.append((query, params))
+            return [[None]]
+
+    assets.read_watermark(Reader(), 3)
+    query, params = calls[0]
+    assert "%%" in query and params == {}
