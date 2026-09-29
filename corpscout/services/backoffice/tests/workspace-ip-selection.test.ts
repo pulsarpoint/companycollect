@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { EMPTY_WORKSPACE_IP_FILTERS } from "~/lib/workspace-ip-addresses";
 import {
   isIpSelected,
   selectIpAddresses,
@@ -16,7 +17,7 @@ it("retains individual selections across pages and removes only the unchecked pa
 it("selects unseen matches and tracks exclusions without expanding the inventory", () => {
   let selection: WorkspaceIpSelection = {
     mode: "all",
-    filters: { search: "", version: "4" },
+    filters: { ...EMPTY_WORKSPACE_IP_FILTERS, version: "4" },
     excludedIps: [],
   };
   expect(isIpSelected(selection, "8.8.8.8")).toBe(true);

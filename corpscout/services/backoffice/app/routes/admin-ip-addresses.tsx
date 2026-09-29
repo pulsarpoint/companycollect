@@ -38,10 +38,14 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { IpAddressFilterSheet } from "~/components/admin/ip-address-filter-sheet";
 import { ipAddressDetailHref } from "~/lib/ip-address-detail";
+import { ipFilterLabels } from "~/lib/ip-filter-options.server";
 import {
+  IP_LIST_FILTER_KEYS,
   parseWorkspaceIpFilters,
   workspaceIpAddressesHref,
+  workspaceIpListOrder,
 } from "~/lib/workspace-ip-addresses";
 import {
   listWorkspaceIpAddresses,
@@ -79,9 +83,22 @@ function IpStatistics() {
             ))}
           </dl>
           <p className="text-muted-foreground text-xs">
-            Entire DNS inventory, independent of filters · Counted{" "}
-            {statistics.countedAt.replace("T", " ").slice(0, 19)} UTC · Cached
-            for up to 5 minutes.
+            Entire DNS inventory, independent of filters ·{" "}
+            {statistics.refreshedAt ? (
+              <>
+                Last updated{" "}
+                <time dateTime={`${statistics.refreshedAt.replace(" ", "T")}Z`}>
+                  {statistics.refreshedAt}
+                </time>{" "}
+                UTC
+              </>
+            ) : (
+              "Not built yet: the search table fills after its first refresh"
+            )}
+            {statistics.refreshFailed
+              ? " · The last rebuild failed; showing the previous snapshot"
+              : ""}{" "}
+            · Rebuilt daily and after each IP enrichment task.
           </p>
         </>
       ) : data && state === "idle" ? (
@@ -109,10 +126,11 @@ function IpStatistics() {
 export async function loader({ request }: Route.LoaderArgs) {
   const params = new URL(request.url).searchParams;
   const filters = parseWorkspaceIpFilters(params);
-  return {
-    ...(await listWorkspaceIpAddresses(filters, params.get("after") ?? "")),
-    filters,
-  };
+  const [list, labels] = await Promise.all([
+    listWorkspaceIpAddresses(filters, params.get("after") ?? ""),
+    ipFilterLabels(filters),
+  ]);
+  return { ...list, filters, labels };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -164,7 +182,7 @@ export function meta() {
 export default function WorkspaceIpAddresses({
   loaderData,
 }: Route.ComponentProps) {
-  const { rows, filters, after, next, hasMore } = loaderData;
+  const { rows, filters, labels, after, next, hasMore } = loaderData;
   type SelectionState = {
     filterKey: string;
     selection: WorkspaceIpSelection;
@@ -241,11 +259,19 @@ export default function WorkspaceIpAddresses({
         <p className="text-muted-foreground max-w-4xl text-sm">
           All IPv4 and IPv6 addresses observed by our DNS and zone-transfer
           scanners. Each address appears once, including historical records and
-          addresses without enrichment.
+          addresses without enrichment.{" "}
+          {workspaceIpListOrder(filters) === "location"
+            ? "Sorted by country, region and city."
+            : "Sorted by ASN (addresses without an ASN first)."}
         </p>
       </header>
       <IpStatistics />
       <Form method="get" key={JSON.stringify(filters)}>
+        {IP_LIST_FILTER_KEYS.flatMap((key) =>
+          filters[key].map((value) => (
+            <input key={`${key}:${value}`} type="hidden" name={key} value={value} />
+          )),
+        )}
         <FieldGroup className="sm:flex-row sm:items-end">
           <Field className="sm:max-w-xs">
             <FieldLabel htmlFor="ip-search">IP address or prefix</FieldLabel>
@@ -281,6 +307,7 @@ export default function WorkspaceIpAddresses({
           </Button>
         </FieldGroup>
       </Form>
+      <IpAddressFilterSheet filters={filters} labels={labels} />
       {receipt ? (
         <QueueImportStatus
           receipt={receipt}
@@ -502,9 +529,10 @@ export default function WorkspaceIpAddresses({
         </div>
       </div>
       <p className="text-muted-foreground text-xs">
-        Address inventory: <code>corpscout.commoncrawl_ip_addresses</code>.{" "}
-        Location, ASN and RDAP come from saved IP enrichment results. A dash
-        means no data is available.
+        Addresses and filters: <code>corpscout.ip_enrichment_search</code>, one
+        row per address of <code>corpscout.commoncrawl_ip_addresses</code> with
+        its saved IP enrichment results, rebuilt daily and after each IP
+        enrichment task. A dash means no data is available.
       </p>
     </div>
   );

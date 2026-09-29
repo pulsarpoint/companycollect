@@ -1,44 +1,56 @@
 import { isIP } from "node:net";
 import { chQuery } from "~/lib/clickhouse.server";
-import type { WorkspaceIpFilters } from "~/lib/workspace-ip-addresses";
+import {
+  workspaceIpListOrder,
+  type WorkspaceIpFilters,
+} from "~/lib/workspace-ip-addresses";
 
-interface IpKey {
+/** One row per inventory IP with its current enrichment (migration 000470). A
+ * refreshable view rebuilds it daily and after every IP enrichment task. */
+export const IP_SEARCH_RELATION = "corpscout.ip_enrichment_search";
+
+export interface WorkspaceIpAddress {
   bucket: number;
   ip_version: 4 | 6;
   ip: string;
-}
-
-interface IpObservation extends IpKey {
   first_seen: string;
   last_seen: string;
-}
-
-interface Geoip {
-  ip: string;
   country_iso_code: string | null;
   city_name: string | null;
   asn: number | null;
   asn_organization: string | null;
-}
-
-interface Enrichment extends Geoip {
   rdap_matched_cidr: string | null;
   rdap_name: string | null;
 }
 
-export interface WorkspaceIpAddress extends IpObservation, Geoip {
-  rdap_matched_cidr: string | null;
-  rdap_name: string | null;
+interface SearchRow {
+  bucket: number;
+  ip_version: 4 | 6;
+  ip: string;
+  first_seen: string;
+  last_seen: string;
+  asn: number;
+  asn_organization: string;
+  country_iso_code: string;
+  subdivision_iso_code: string;
+  city_name: string;
+  rdap_matched_cidr: string;
+  rdap_name: string;
 }
 
 const PAGE_SIZE = 50;
-const QUERY_SETTINGS = "SETTINGS max_threads=4, max_execution_time=20";
+const QUERY_SETTINGS =
+  "SETTINGS max_threads=4, max_execution_time=20, optimize_read_in_order=1";
 
 export interface WorkspaceIpStatistics {
   total: number;
   ipv4: number;
   ipv6: number;
   countedAt: string;
+  /** Last successful rebuild of the search table (UTC, "YYYY-MM-DD hh:mm:ss"). */
+  refreshedAt: string | null;
+  /** The last rebuild raised: the table still serves the previous snapshot. */
+  refreshFailed: boolean;
 }
 
 let statisticsCache: WorkspaceIpStatistics | undefined;
@@ -54,41 +66,33 @@ export async function getWorkspaceIpStatistics(): Promise<WorkspaceIpStatistics>
   }
   if (statisticsPending) return statisticsPending;
   statisticsPending = (async () => {
-    let nextBucket = 0;
+    // One row per IP: a count reads the one-byte ip_version column only.
+    const [counts, refreshes] = await Promise.all([
+      chQuery<{ ip_version: number; addresses: string }>(
+        `SELECT ip_version, toString(count()) AS addresses FROM ${IP_SEARCH_RELATION}
+         GROUP BY ip_version ${QUERY_SETTINGS}`,
+      ),
+      chQuery<{ last_success_time: string | null; failed: number }>(
+        `SELECT toString(last_success_time) AS last_success_time,
+           toUInt8(exception != '') AS failed
+         FROM system.view_refreshes
+         WHERE database = 'corpscout' AND view = 'ip_enrichment_search'`,
+      ),
+    ]);
     let ipv4 = 0;
     let ipv6 = 0;
-    // FINAL collapses repeated observations. Counting bounded, disjoint hash
-    // buckets avoids one huge merge and caps database concurrency at four reads.
-    const workers = await Promise.allSettled(
-      Array.from({ length: 4 }, async () => {
-        while (nextBucket < 256) {
-          const bucket = nextBucket++;
-          const counts = await chQuery<{
-            ip_version: number;
-            addresses: string;
-          }>(
-            `SELECT ip_version, toString(count()) AS addresses
-           FROM corpscout.commoncrawl_ip_addresses FINAL WHERE bucket = {bucket:UInt16}
-           GROUP BY ip_version SETTINGS max_threads=1, max_execution_time=20`,
-            { bucket },
-          ).catch((error) => {
-            nextBucket = 256;
-            throw error;
-          });
-          for (const row of counts) {
-            if (row.ip_version === 4) ipv4 += Number(row.addresses);
-            if (row.ip_version === 6) ipv6 += Number(row.addresses);
-          }
-        }
-      }),
-    );
-    const failure = workers.find((worker) => worker.status === "rejected");
-    if (failure?.status === "rejected") throw failure.reason;
+    for (const row of counts) {
+      if (row.ip_version === 4) ipv4 += Number(row.addresses);
+      if (row.ip_version === 6) ipv6 += Number(row.addresses);
+    }
+    const refresh = refreshes[0];
     statisticsCache = {
       total: ipv4 + ipv6,
       ipv4,
       ipv6,
       countedAt: new Date().toISOString(),
+      refreshedAt: refresh?.last_success_time || null,
+      refreshFailed: Boolean(refresh?.failed),
     };
     return statisticsCache;
   })();
@@ -99,31 +103,146 @@ export async function getWorkspaceIpStatistics(): Promise<WorkspaceIpStatistics>
   }
 }
 
-function decodeCursor(after: string): IpKey | null {
-  if (!after || after.length > 256) return null;
+type Cursor =
+  | { order: "asn"; key: [number, number, string] }
+  | { order: "location"; key: [string, string, string, number, string] };
+
+function isBucket(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) < 256;
+}
+
+function isShortString(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 256;
+}
+
+function decodeCursor(after: string, order: Cursor["order"]): Cursor | null {
+  if (!after || after.length > 1024) return null;
   try {
-    const key = JSON.parse(Buffer.from(after, "base64url").toString());
+    const cursor = JSON.parse(Buffer.from(after, "base64url").toString());
+    const key = cursor?.key;
+    if (cursor?.order !== order || !Array.isArray(key)) return null;
     if (
-      key &&
-      Number.isInteger(key.bucket) &&
-      key.bucket >= 0 &&
-      key.bucket < 256 &&
-      (key.ip_version === 4 || key.ip_version === 6) &&
-      typeof key.ip === "string" &&
-      isIP(key.ip) === key.ip_version
+      order === "asn" &&
+      key.length === 3 &&
+      Number.isInteger(key[0]) &&
+      key[0] >= 0 &&
+      key[0] <= 4294967295 &&
+      isBucket(key[1]) &&
+      typeof key[2] === "string" &&
+      isIP(key[2])
     )
-      return { bucket: key.bucket, ip_version: key.ip_version, ip: key.ip };
+      return { order, key: [key[0], key[1], key[2]] };
+    if (
+      order === "location" &&
+      key.length === 5 &&
+      isShortString(key[0]) &&
+      isShortString(key[1]) &&
+      isShortString(key[2]) &&
+      isBucket(key[3]) &&
+      typeof key[4] === "string" &&
+      isIP(key[4])
+    )
+      return { order, key: [key[0], key[1], key[2], key[3], key[4]] };
   } catch {
     // A stale or malformed cursor starts at the first page.
   }
   return null;
 }
 
+function encodeCursor(order: Cursor["order"], row: SearchRow): string {
+  const key =
+    order === "asn"
+      ? [row.asn, row.bucket, row.ip]
+      : [
+          row.country_iso_code,
+          row.subdivision_iso_code,
+          row.city_name,
+          row.bucket,
+          row.ip,
+        ];
+  return Buffer.from(JSON.stringify({ order, key })).toString("base64url");
+}
+
+/** Filter predicates over the search table, every value a bound parameter. */
+export function workspaceIpConditions(filters: WorkspaceIpFilters): {
+  conditions: string[];
+  params: Record<string, unknown>;
+} {
+  const conditions: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (filters.version !== "any") {
+    conditions.push("ip_version = {version:UInt8}");
+    params.version = Number(filters.version);
+  }
+  if (filters.asn.length) {
+    conditions.push("asn IN {asns:Array(UInt32)}");
+    params.asns = filters.asn.map(Number);
+  }
+  if (filters.country.length) {
+    conditions.push("country_iso_code IN {countries:Array(String)}");
+    params.countries = filters.country;
+  }
+  if (filters.country.length === 1 && filters.region.length) {
+    conditions.push("subdivision_iso_code IN {regions:Array(String)}");
+    params.regions = filters.region;
+  }
+  if (filters.country.length === 1 && filters.city.length) {
+    conditions.push("city_name IN {cities:Array(String)}");
+    params.cities = filters.city;
+  }
+  if (filters.search) {
+    params.search = filters.search;
+    const version = isIP(filters.search);
+    if (version) {
+      // Canonicalize IPv6 (including mapped IPv4) exactly as DNS ingestion does.
+      // The bucket narrows every key order's range, ip_bloom finds the granule.
+      const canonical =
+        version === 4
+          ? "toString(toIPv4({search:String}))"
+          : "toString(toIPv6({search:String}))";
+      conditions.push(
+        `bucket = toUInt16(modulo(cityHash64(${canonical}), 256))`,
+        `ip = ${canonical}`,
+      );
+    } else {
+      // Search text is ASCII; this exclusive upper bound describes precisely
+      // the same prefix as a string interval.
+      conditions.push("ip >= {search:String}", "ip < {prefixEnd:String}");
+      params.prefixEnd =
+        filters.search.slice(0, -1) +
+        String.fromCharCode(
+          filters.search.charCodeAt(filters.search.length - 1) + 1,
+        );
+    }
+  }
+  return { conditions, params };
+}
+
+/**
+ * `(a, b, c) > (x, y, z)` spelled as nested comparisons: ClickHouse 26.5 does not
+ * use a tuple comparison to narrow the primary key (every page would scan from
+ * the start of the filtered range), but it does use this form.
+ */
+export function keysetAfter(keys: [column: string, value: string][]): string {
+  const [[column, value], ...rest] = keys;
+  return rest.length
+    ? `(${column} > ${value} OR (${column} = ${value} AND ${keysetAfter(rest)}))`
+    : `${column} > ${value}`;
+}
+
+const ORDER_KEYS = {
+  asn: "asn, bucket, ip",
+  location: "country_iso_code, subdivision_iso_code, city_name, bucket, ip",
+} as const;
+
+function emptyToNull(value: string): string | null {
+  return value === "" ? null : value;
+}
+
 export async function listWorkspaceIpAddresses(
   filters: WorkspaceIpFilters,
   after = "",
 ) {
-  const cursor = decodeCursor(after);
   if (
     filters.search &&
     (!/^[0-9a-f:.]+$/.test(filters.search) || filters.search.length > 45)
@@ -135,137 +254,67 @@ export async function listWorkspaceIpAddresses(
       after: "",
     };
   }
-  const conditions: string[] = [];
-  const params: Record<string, unknown> = {
-    limit: PAGE_SIZE + 1,
-    search: filters.search,
-  };
-  if (cursor) {
+  const order = workspaceIpListOrder(filters);
+  const cursor = decodeCursor(after, order);
+  const { conditions, params } = workspaceIpConditions(filters);
+  params.limit = PAGE_SIZE + 1;
+  if (cursor?.order === "asn") {
     conditions.push(
-      "(bucket, ip_version, ip) > ({bucket:UInt16}, {cursorVersion:UInt8}, {afterIp:String})",
+      keysetAfter([
+        ["asn", "{afterAsn:UInt32}"],
+        ["bucket", "{afterBucket:UInt16}"],
+        ["ip", "{afterIp:String}"],
+      ]),
     );
-    Object.assign(params, {
-      bucket: cursor.bucket,
-      cursorVersion: cursor.ip_version,
-      afterIp: cursor.ip,
-    });
+    [params.afterAsn, params.afterBucket, params.afterIp] = cursor.key;
+  } else if (cursor?.order === "location") {
+    conditions.push(
+      keysetAfter([
+        ["country_iso_code", "{afterCountry:String}"],
+        ["subdivision_iso_code", "{afterRegion:String}"],
+        ["city_name", "{afterCity:String}"],
+        ["bucket", "{afterBucket:UInt16}"],
+        ["ip", "{afterIp:String}"],
+      ]),
+    );
+    [
+      params.afterCountry,
+      params.afterRegion,
+      params.afterCity,
+      params.afterBucket,
+      params.afterIp,
+    ] = cursor.key;
   }
-  if (filters.version !== "any") {
-    conditions.push("ip_version = {version:UInt8}");
-    params.version = Number(filters.version);
-  }
-  if (filters.search) {
-    const version = isIP(filters.search);
-    if (version) {
-      // Canonicalize IPv6 (including mapped IPv4) exactly as DNS ingestion does.
-      const canonical =
-        version === 4
-          ? "toString(toIPv4({search:String}))"
-          : "toString(toIPv6({search:String}))";
-      conditions.push(
-        `bucket = toUInt16(modulo(cityHash64(${canonical}), 256))`,
-        `ip = ${canonical}`,
-      );
-    } else {
-      conditions.push(
-        "ip_version IN (4, 6)",
-        "ip >= {search:String}",
-        "ip < {prefixEnd:String}",
-      );
-      // Search text is ASCII; this exclusive upper bound describes precisely
-      // the same prefix and gives ClickHouse an indexable string interval.
-      params.prefixEnd =
-        filters.search.slice(0, -1) +
-        String.fromCharCode(
-          filters.search.charCodeAt(filters.search.length - 1) + 1,
-        );
-    }
-  }
-
-  // Page over distinct keys first. FINAL or a global min/max aggregation would
-  // merge tens of millions of observations before it could apply LIMIT.
-  const selectKeys = (extraConditions: string[] = []) => {
-    const where = [...conditions, ...extraConditions];
-    return `SELECT DISTINCT bucket, ip_version, ip FROM corpscout.commoncrawl_ip_addresses
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY bucket, ip_version, ip LIMIT {limit:UInt32}`;
-  };
-  const keySettings = `${QUERY_SETTINGS}, optimize_read_in_order=1, optimize_distinct_in_order=1`;
-  let keys: IpKey[] = [];
-  if (filters.search && !isIP(filters.search)) {
-    // Prefixes cannot constrain the hash that leads the primary key. Explicit
-    // bucket equality lets each branch prune its index; an unrestricted prefix
-    // search otherwise reads the full inventory before producing the first page.
-    for (
-      let bucket = cursor?.bucket ?? 0;
-      bucket < 256 && keys.length < PAGE_SIZE + 1;
-      bucket += 8
-    ) {
-      const branches = Array.from(
-        { length: Math.min(8, 256 - bucket) },
-        (_, i) => `(${selectKeys([`bucket = ${bucket + i}`])})`,
-      );
-      const batch = await chQuery<IpKey>(
-        `SELECT bucket, ip_version, ip FROM (${branches.join(" UNION ALL ")})
-         ORDER BY bucket, ip_version, ip LIMIT {limit:UInt32} ${keySettings}`,
-        { ...params, limit: PAGE_SIZE + 1 - keys.length },
-      );
-      keys.push(...batch);
-    }
-  } else {
-    keys = await chQuery<IpKey>(`${selectKeys()} ${keySettings}`, params);
-  }
-  const page = keys.slice(0, PAGE_SIZE);
-  if (!page.length)
-    return {
-      rows: [] as WorkspaceIpAddress[],
-      hasMore: false,
-      next: "",
-      after: cursor ? after : "",
-    };
-  const pageParams = {
-    buckets: page.map((row) => row.bucket),
-    versions: page.map((row) => row.ip_version),
-    ips: page.map((row) => row.ip),
-  };
-  const [observations, enrichment] = await Promise.all([
-    chQuery<IpObservation>(
-      `SELECT bucket, ip_version, ip, toString(min(first_seen)) AS first_seen,
-       toString(max(last_seen)) AS last_seen FROM corpscout.commoncrawl_ip_addresses
-       WHERE (bucket, ip_version, ip) IN arrayZip({buckets:Array(UInt16)}, {versions:Array(UInt8)}, {ips:Array(String)})
-       GROUP BY bucket, ip_version, ip ${QUERY_SETTINGS}`,
-      pageParams,
-    ),
-    // Filter sorting-key columns before FINAL to avoid reading unrelated payloads.
-    chQuery<Enrichment>(
-      `SELECT ip, country_iso_code, city_name, asn, asn_organization,
-       rdap_matched_cidr, rdap_name
-       FROM corpscout.ip_enrichment_current
-       WHERE (bucket, ip) IN arrayZip({buckets:Array(UInt16)}, {ips:Array(String)})
-       ${QUERY_SETTINGS}, optimize_move_to_prewhere_if_final=1`,
-      pageParams,
-    ),
-  ]);
-  const observationMap = new Map(observations.map((row) => [row.ip, row]));
-  const enrichmentMap = new Map(enrichment.map((row) => [row.ip, row]));
-  const rows = page.map((key): WorkspaceIpAddress => {
-    const current = enrichmentMap.get(key.ip);
-    return {
-      ...key,
-      first_seen: observationMap.get(key.ip)?.first_seen ?? "",
-      last_seen: observationMap.get(key.ip)?.last_seen ?? "",
-      country_iso_code: current?.country_iso_code ?? null,
-      city_name: current?.city_name ?? null,
-      asn: current?.asn ?? null,
-      asn_organization: current?.asn_organization ?? null,
-      rdap_matched_cidr: current?.rdap_matched_cidr ?? null,
-      rdap_name: current?.rdap_name ?? null,
-    };
-  });
+  // Keyset over a key order ClickHouse reads in order: the sort key
+  // (asn, bucket, ip), or the by_location projection for location filters.
+  const rows = await chQuery<SearchRow>(
+    `SELECT bucket, ip_version, ip, toString(first_seen) AS first_seen,
+       toString(last_seen) AS last_seen, asn, asn_organization, country_iso_code,
+       subdivision_iso_code, city_name, rdap_matched_cidr, rdap_name
+     FROM ${IP_SEARCH_RELATION}
+     ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
+     ORDER BY ${ORDER_KEYS[order]} LIMIT {limit:UInt32} ${QUERY_SETTINGS}`,
+    params,
+  );
+  const page = rows.slice(0, PAGE_SIZE);
   return {
-    rows,
-    hasMore: keys.length > PAGE_SIZE,
-    next: Buffer.from(JSON.stringify(page.at(-1))).toString("base64url"),
+    rows: page.map(
+      (row): WorkspaceIpAddress => ({
+        bucket: row.bucket,
+        ip_version: row.ip_version,
+        ip: row.ip,
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
+        country_iso_code: emptyToNull(row.country_iso_code),
+        city_name: emptyToNull(row.city_name),
+        asn: row.asn === 0 ? null : row.asn,
+        asn_organization: emptyToNull(row.asn_organization),
+        rdap_matched_cidr: emptyToNull(row.rdap_matched_cidr),
+        rdap_name: emptyToNull(row.rdap_name),
+      }),
+    ),
+    hasMore: rows.length > PAGE_SIZE,
+    next: page.length ? encodeCursor(order, page[page.length - 1]) : "",
     after: cursor ? after : "",
   };
 }

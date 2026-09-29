@@ -22,17 +22,33 @@ describe("IP enrichment queue submission", () => {
   });
 
   it.each(["any", "4", "6"])("submits all matching addresses compactly for version %s", async (version) => {
-    await addIpsToEnrichmentQueue({ mode: "all", filters: { search: "2001:db8:", version }, excludedIps: ["2001:db8::1", "2001:db8::1"] }, submission, "operator");
+    await addIpsToEnrichmentQueue({ mode: "all", filters: { search: "2001:db8:", version, asn: [], country: [], region: [], city: [] }, excludedIps: ["2001:db8::1", "2001:db8::1"] }, submission, "operator");
     const config = dagster.launchRun.mock.calls[0][0].runConfig.ops.ip_enrichment_input.config;
-    expect(config).toMatchObject({ source_relation: "corpscout.commoncrawl_ip_addresses", observed_at_column: "last_seen", select_all: true, ip_search: "2001:db8:",
+    expect(config).toMatchObject({ source_relation: "corpscout.ip_enrichment_search", observed_at_column: "last_seen", select_all: true, ip_search: "2001:db8:",
       filters: version === "any" ? {} : { ip_version: [version] }, excluded_ips: ["2001:db8::1"] });
     expect(config).not.toHaveProperty("max_rows");
     expect(config).not.toHaveProperty("ips");
   });
 
-  it("supports the entire inventory without a pagination limit", async () => {
+  it("maps the list filters to exact-match columns of the search table", async () => {
+    await addIpsToEnrichmentQueue({ mode: "all", filters: { search: "", version: "4", asn: ["3301", "15169"], country: ["SE"], region: ["AB"], city: ["Stockholm"] }, excludedIps: [] }, submission, "operator");
+    const call = dagster.launchRun.mock.calls[0][0];
+    expect(call.runConfig.ops.ip_enrichment_input.config).toEqual({
+      source_name: "backoffice:ip-addresses", source_relation: "corpscout.ip_enrichment_search", observed_at_column: "last_seen",
+      select_all: true, ip_search: "", excluded_ips: [], queue_scope: "workspace", submission_id: submission,
+      filters: { asn: ["15169", "3301"], country_iso_code: ["SE"], subdivision_iso_code: ["AB"], city_name: ["Stockholm"], ip_version: ["4"] },
+    });
+    // The receipt fingerprint covers the filters: another filter set is another selection.
+    const tags = call.tags;
+    dagster.listRuns.mockResolvedValue([{runId: "new", status: "SUCCESS", tags}]);
+    await expect(addIpsToEnrichmentQueue({ mode: "all", filters: { search: "", version: "4", asn: ["3301"], country: ["SE"], region: ["AB"], city: ["Stockholm"] }, excludedIps: [] }, submission, "operator")).rejects.toThrow("another selection");
+    // The same filters in another order are the same selection.
+    expect(await addIpsToEnrichmentQueue({ mode: "all", filters: { search: "", version: "4", asn: ["15169", "3301"], country: ["SE"], region: ["AB"], city: ["Stockholm"] }, excludedIps: [] }, submission, "operator")).toMatchObject({runId: "new"});
+  });
+
+  it("accepts a selection saved before the location filters existed", async () => {
     await addIpsToEnrichmentQueue({ mode: "all", filters: { search: "", version: "any" }, excludedIps: [] }, submission, "operator");
-    expect(dagster.launchRun.mock.calls[0][0].runConfig.ops.ip_enrichment_input.config).toMatchObject({ select_all: true, ip_search: "", filters: {} });
+    expect(dagster.launchRun.mock.calls[0][0].runConfig.ops.ip_enrichment_input.config).toMatchObject({ select_all: true, filters: {} });
   });
 
   it("recovers an acknowledged submission and rejects a changed selection", async () => {
@@ -58,6 +74,14 @@ describe("IP enrichment queue submission", () => {
     { mode: "all", filters: { search: "", version: 4 }, excludedIps: [] },
     { mode: "all", filters: { search: "", version: "any", sql: "1=1" }, excludedIps: [] },
     { mode: "all", filters: { search: "", version: "any" }, excludedIps: ["invalid"] },
+    { mode: "all", filters: { search: "", version: "any", asn: ["AS15169"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", asn: ["1 OR 1=1"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", country: ["se"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", country: "SE" }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", region: ["AB"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", country: ["SE", "NO"], city: ["Oslo"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", country: ["SE"], city: ["x\u0000"] }, excludedIps: [] },
+    { mode: "all", filters: { search: "", version: "any", asn: Array.from({ length: 51 }, (_, i) => String(i + 1)) }, excludedIps: [] },
   ])("rejects invalid selections before contacting Dagster: %j", async (selection) => {
     await expect(addIpsToEnrichmentQueue(selection, submission, "operator")).rejects.toThrow();
     expect(dagster.launchRun).not.toHaveBeenCalled();

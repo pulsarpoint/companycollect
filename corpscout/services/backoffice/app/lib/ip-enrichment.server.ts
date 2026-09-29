@@ -8,7 +8,18 @@ import {
   type DagsterOptions,
 } from "~/lib/dagster.server";
 import { QUEUE_UUID } from "~/lib/queues";
+import {
+  IP_LIST_FILTER_KEYS,
+  isCityName,
+  isCountryCode,
+  isRegionCode,
+  MAX_FILTER_VALUES,
+  normalizeAsn,
+  withLocationScope,
+  type WorkspaceIpFilters,
+} from "~/lib/workspace-ip-addresses";
 import type { WorkspaceIpSelection } from "~/lib/workspace-ip-selection";
+import { IP_SEARCH_RELATION } from "~/lib/workspace-ip-addresses.server";
 
 const JOB = "ip_enrichment_input_job";
 const ASSET = "ip_enrichment_input";
@@ -42,6 +53,57 @@ function ipList(value: unknown): string[] {
   return [...new Set(value as string[])];
 }
 
+function invalidFilters(): never {
+  throw new IpEnrichmentSelectionError(
+    "The IP address filters are invalid. Apply the filters again.",
+  );
+}
+
+function filterValues(
+  value: unknown,
+  valid: (item: string) => boolean,
+): string[] {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_FILTER_VALUES ||
+    value.some((item) => typeof item !== "string" || !valid(item))
+  )
+    invalidFilters();
+  return [...new Set(value as string[])].sort();
+}
+
+/** Only the list's own filters, each value in its URL form (the list parser's rules). */
+function parseSelectionFilters(
+  filters: Record<string, unknown>,
+): WorkspaceIpFilters {
+  if (
+    Object.keys(filters).some(
+      (key) =>
+        !["search", "version", ...IP_LIST_FILTER_KEYS].includes(key),
+    ) ||
+    typeof filters.search !== "string" ||
+    (filters.search !== "" && !/^[0-9a-f:.]{1,45}$/.test(filters.search)) ||
+    (filters.version !== "any" &&
+      filters.version !== "4" &&
+      filters.version !== "6")
+  )
+    invalidFilters();
+  const country = filterValues(filters.country, isCountryCode);
+  const region = filterValues(filters.region, isRegionCode);
+  const city = filterValues(filters.city, isCityName);
+  // Region and city are only meaningful inside exactly one country.
+  if ((region.length || city.length) && country.length !== 1) invalidFilters();
+  return {
+    search: filters.search as string,
+    version: filters.version as "any" | "4" | "6",
+    asn: filterValues(filters.asn, (item) => normalizeAsn(item) === item),
+    country,
+    region,
+    city,
+  };
+}
+
 export function parseIpEnrichmentSelection(
   value: unknown,
 ): WorkspaceIpSelection {
@@ -61,27 +123,9 @@ export function parseIpEnrichmentSelection(
       ["mode", "filters", "excludedIps"].includes(key),
     )
   ) {
-    const filters = record(selection.filters);
-    if (
-      Object.keys(filters).some(
-        (key) => !["search", "version"].includes(key),
-      ) ||
-      typeof filters.search !== "string" ||
-      (filters.search !== "" && !/^[0-9a-f:.]{1,45}$/.test(filters.search)) ||
-      (filters.version !== "any" &&
-        filters.version !== "4" &&
-        filters.version !== "6")
-    ) {
-      throw new IpEnrichmentSelectionError(
-        "The IP address filters are invalid. Apply the filters again.",
-      );
-    }
     return {
       mode: "all",
-      filters: {
-        search: filters.search,
-        version: filters.version as "any" | "4" | "6",
-      },
+      filters: parseSelectionFilters(record(selection.filters)),
       excludedIps: ipList(selection.excludedIps),
     };
   }
@@ -90,25 +134,40 @@ export function parseIpEnrichmentSelection(
   );
 }
 
+/** The search table column each list filter matches exactly. */
+const FILTER_COLUMNS = {
+  asn: "asn",
+  country: "country_iso_code",
+  region: "subdivision_iso_code",
+  city: "city_name",
+} as const;
+
 export function inputConfig(
   selection: WorkspaceIpSelection,
 ): Record<string, unknown> {
   const input: Record<string, unknown> = {
     source_name: "backoffice:ip-addresses",
-    source_relation: "corpscout.commoncrawl_ip_addresses",
     observed_at_column: "last_seen",
   };
   if (selection.mode === "ips") {
-    input.filters = { ip: selection.ips };
-  } else {
-    // Dagster selects the whole matching inventory in ClickHouse, independently of pagination.
     Object.assign(input, {
+      source_relation: "corpscout.commoncrawl_ip_addresses",
+      filters: { ip: selection.ips },
+    });
+  } else {
+    // "All matching" reads the list's own snapshot, so the draft gets exactly the
+    // rows the filters show, with each filter an exact-match column of that table.
+    // Dagster selects them in ClickHouse, independently of pagination.
+    const filters: Record<string, string[]> = {};
+    const chosen = withLocationScope(selection.filters);
+    for (const key of IP_LIST_FILTER_KEYS)
+      if (chosen[key].length) filters[FILTER_COLUMNS[key]] = [...chosen[key]].sort();
+    if (chosen.version !== "any") filters.ip_version = [chosen.version];
+    Object.assign(input, {
+      source_relation: IP_SEARCH_RELATION,
       select_all: true,
-      ip_search: selection.filters.search,
-      filters:
-        selection.filters.version === "any"
-          ? {}
-          : { ip_version: [selection.filters.version] },
+      ip_search: chosen.search,
+      filters,
       excluded_ips: selection.excludedIps,
     });
   }
