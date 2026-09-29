@@ -462,6 +462,7 @@ export interface OverviewRow {
 
 /** Enrichment rows served within this window reuse one read (header + tab of one request). */
 const ENRICHMENT_TTL_MS = 30_000;
+const ENRICHMENT_CACHE_MAX = 1000;
 const enrichmentCache = new Map<
   string,
   { expires: number; row: Promise<OverviewRow | null> }
@@ -479,14 +480,24 @@ export function loadEnrichmentRow(
   const now = Date.now();
   const cached = enrichmentCache.get(key);
   if (cached && cached.expires > now) return cached.row;
+  if (cached) enrichmentCache.delete(key);
   for (const [entryKey, entry] of enrichmentCache) {
     if (entry.expires <= now) enrichmentCache.delete(entryKey);
   }
   const row = chQuery<OverviewRow>(OVERVIEW_SQL, addressParams(address)).then(
     (rows) => rows[0] ?? null,
   );
+  // Map order is insertion order, so the first key is the oldest entry.
+  while (enrichmentCache.size >= ENRICHMENT_CACHE_MAX) {
+    const oldest = enrichmentCache.keys().next().value;
+    if (oldest === undefined) break;
+    enrichmentCache.delete(oldest);
+  }
   enrichmentCache.set(key, { expires: now + ENRICHMENT_TTL_MS, row });
-  row.catch(() => enrichmentCache.delete(key));
+  row.catch(() => {
+    // Only evict this read; a newer read for the key may have replaced it.
+    if (enrichmentCache.get(key)?.row === row) enrichmentCache.delete(key);
+  });
   return row;
 }
 
@@ -836,23 +847,35 @@ const CONNECTION_PREWHERE = `segment_bucket = toUInt8(cityHash64({networkSegment
   AND segment_cidr = {networkSegment:String}
   AND ip_version = {version:UInt8}`;
 
-// The exact-IP read of technologyExactIpConnectionsSql (queries.server.ts) with keyset paging
-// on root_domain (the last sort-key column) instead of OFFSET and no count() OVER ().
-const EXACT_CONNECTIONS_SQL = `SELECT
-  ip,
-  toUInt8(ip_version) AS version,
-  root_domain AS domain,
-  hostnames,
-  sources,
-  discoveries,
-  toString(first_seen) AS first_seen,
-  toString(last_seen) AS last_seen
-FROM commoncrawl_domain_ip_connections FINAL
+// Exact-address reads avoid FINAL (a busy address has too many rows to merge in 30 s) with a
+// two-phase read. Phase 1 walks the (…, address, root_domain) sort key in order for the page's
+// distinct root domains; the extra row decides whether a next page exists.
+const EXACT_DOMAINS_SQL = `SELECT DISTINCT root_domain
+FROM commoncrawl_domain_ip_connections
 PREWHERE ${CONNECTION_PREWHERE}
   AND address = toIPv6({ip:String})
   AND root_domain > {after:String}
 ORDER BY root_domain
-LIMIT {limit:UInt32}`;
+LIMIT {limit:UInt32}
+SETTINGS optimize_read_in_order=1, optimize_distinct_in_order=1`;
+
+// Phase 2 aggregates unmerged rows of just those root domains (what FINAL would merge).
+const EXACT_CONNECTIONS_SQL = `SELECT
+  any(ip) AS ip,
+  toUInt8(any(ip_version)) AS version,
+  root_domain AS domain,
+  groupUniqArrayArray(hostnames) AS all_hostnames,
+  groupUniqArrayArray(sources) AS all_sources,
+  groupUniqArrayArray(discoveries) AS all_discoveries,
+  length(groupUniqArrayArray(seen_dates)) AS seen_date_count,
+  toString(min(first_seen)) AS first_seen_at,
+  toString(max(last_seen)) AS last_seen_at
+FROM commoncrawl_domain_ip_connections
+PREWHERE ${CONNECTION_PREWHERE}
+  AND address = toIPv6({ip:String})
+  AND root_domain IN {domains:Array(String)}
+GROUP BY root_domain
+ORDER BY root_domain`;
 
 // The neighbourhood read of technologySegmentIpConnectionsSql, keyset on (address, root_domain).
 const SEGMENT_CONNECTIONS_SQL = `SELECT
@@ -866,30 +889,25 @@ const SEGMENT_CONNECTIONS_SQL = `SELECT
   toString(last_seen) AS last_seen
 FROM commoncrawl_domain_ip_connections FINAL
 PREWHERE ${CONNECTION_PREWHERE}
+  AND address >= toIPv6({afterAddress:String})
   AND (address, root_domain) > (toIPv6({afterAddress:String}), {afterDomain:String})
 WHERE address != toIPv6({ip:String})
 ORDER BY address, root_domain
 LIMIT {limit:UInt32}`;
 
-// The DNS tab: hostnames pointing at the address, one row per hostname, read from the
-// connections table only. Sources, discoveries, dates and the seen count are per root domain.
+// The DNS tab: hostnames pointing at the address, one row per hostname, from phase 2 of the
+// exact read. Sources, discoveries, dates and the seen count are per root domain.
 const DNS_HOSTNAMES_SQL = `SELECT
-  root_domain,
-  arrayJoin(arraySort(hostnames)) AS hostname,
-  if(ip_version = 4, 'A', 'AAAA') AS type,
-  arraySort(sources) AS sources,
-  arraySort(discoveries) AS discoveries,
-  length(seen_dates) AS seen_dates,
-  toString(first_seen) AS first_seen,
-  toString(last_seen) AS last_seen
+  domain AS root_domain,
+  arrayJoin(arraySort(all_hostnames)) AS hostname,
+  if(version = 4, 'A', 'AAAA') AS type,
+  arraySort(all_sources) AS sources,
+  arraySort(all_discoveries) AS discoveries,
+  seen_date_count AS seen_dates,
+  first_seen_at AS first_seen,
+  last_seen_at AS last_seen
 FROM (
-  SELECT ip_version, root_domain, hostnames, sources, discoveries, seen_dates, first_seen, last_seen
-  FROM commoncrawl_domain_ip_connections FINAL
-  PREWHERE ${CONNECTION_PREWHERE}
-    AND address = toIPv6({ip:String})
-    AND root_domain > {after:String}
-  ORDER BY root_domain
-  LIMIT {limit:UInt32}
+${EXACT_CONNECTIONS_SQL}
 )
 ORDER BY root_domain, hostname`;
 
@@ -996,31 +1014,72 @@ function connectionParams(address: ResolvedIpAddress) {
   };
 }
 
+/** Phase 1 of the exact read: the page's root domains and the keyset state. */
+async function loadExactDomainPage(address: ResolvedIpAddress, after: string) {
+  const rows = await chQuery<{ root_domain: string }>(EXACT_DOMAINS_SQL, {
+    ...connectionParams(address),
+    after,
+    limit: IP_DETAIL_PAGE_SIZE + 1,
+  });
+  return keysetPage(
+    rows.map((row) => row.root_domain),
+    IP_DETAIL_PAGE_SIZE,
+    after,
+    (domain) => domain,
+  );
+}
+
+interface ExactAggregateRow {
+  ip: string;
+  version: number;
+  domain: string;
+  all_hostnames: string[];
+  all_sources: string[];
+  all_discoveries: string[];
+  seen_date_count: number | string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
 export async function getIpAddressDomains(
   address: ResolvedIpAddress,
   opts: { after?: string; scope?: IpDomainScope } = {},
 ): Promise<IpAddressDomains> {
   const scope: IpDomainScope = opts.scope === "segment" ? "segment" : "exact";
   let after = (opts.after ?? "").slice(0, 600);
-  const segmentCursor = scope === "segment" ? parseSegmentCursor(after) : null;
-  if (scope === "segment" && !segmentCursor) after = "";
-  const read =
-    scope === "segment"
-      ? chQuery<ConnectionRow>(SEGMENT_CONNECTIONS_SQL, {
-          ...connectionParams(address),
-          afterAddress: segmentCursor?.address ?? "::",
-          afterDomain: segmentCursor?.domain ?? "",
-          limit: IP_DETAIL_PAGE_SIZE + 1,
-        })
-      : chQuery<ConnectionRow>(EXACT_CONNECTIONS_SQL, {
-          ...connectionParams(address),
-          after,
-          limit: IP_DETAIL_PAGE_SIZE + 1,
-        });
-  const [rows, coverage] = await Promise.all([read, loadCoverage()]);
-  const page = keysetPage(rows, IP_DETAIL_PAGE_SIZE, after, (row) =>
-    scope === "segment" ? `${row.ip}|${row.domain}` : row.domain,
-  );
+  const coverage = loadCoverage();
+  if (scope === "segment") {
+    const segmentCursor = parseSegmentCursor(after);
+    if (!segmentCursor) after = "";
+    const [rows, coverageResult] = await Promise.all([
+      chQuery<ConnectionRow>(SEGMENT_CONNECTIONS_SQL, {
+        ...connectionParams(address),
+        afterAddress: segmentCursor?.address ?? "::",
+        afterDomain: segmentCursor?.domain ?? "",
+        limit: IP_DETAIL_PAGE_SIZE + 1,
+      }),
+      coverage,
+    ]);
+    const page = keysetPage(rows, IP_DETAIL_PAGE_SIZE, after, (row) => `${row.ip}|${row.domain}`);
+    return {
+      address,
+      scope,
+      after: page.after,
+      next: page.next,
+      total: page.total,
+      pageSize: IP_DETAIL_PAGE_SIZE,
+      connections: page.rows.map(mapConnection),
+      coverage: await coverage,
+    };
+  }
+
+  const page = await loadExactDomainPage(address, after);
+  const rows = page.rows.length
+    ? await chQuery<ExactAggregateRow>(EXACT_CONNECTIONS_SQL, {
+        ...connectionParams(address),
+        domains: page.rows,
+      })
+    : [];
   return {
     address,
     scope,
@@ -1028,8 +1087,19 @@ export async function getIpAddressDomains(
     next: page.next,
     total: page.total,
     pageSize: IP_DETAIL_PAGE_SIZE,
-    connections: page.rows.map(mapConnection),
-    coverage,
+    connections: rows.map((row) =>
+      mapConnection({
+        ip: row.ip,
+        version: row.version,
+        domain: row.domain,
+        hostnames: row.all_hostnames,
+        sources: row.all_sources,
+        discoveries: row.all_discoveries,
+        first_seen: row.first_seen_at,
+        last_seen: row.last_seen_at,
+      }),
+    ),
+    coverage: await coverage,
   };
 }
 
@@ -1049,14 +1119,14 @@ export async function getIpAddressDnsRecords(
   opts: { after?: string } = {},
 ): Promise<IpAddressDnsRecords> {
   const after = (opts.after ?? "").slice(0, 300);
-  const [rows, coverage] = await Promise.all([
-    chQuery<DnsHostnameRow>(DNS_HOSTNAMES_SQL, {
-      ...connectionParams(address),
-      after,
-      limit: IP_DETAIL_PAGE_SIZE + 1,
-    }),
-    loadCoverage(),
-  ]);
+  const coverage = loadCoverage();
+  const page = await loadExactDomainPage(address, after);
+  const rows = page.rows.length
+    ? await chQuery<DnsHostnameRow>(DNS_HOSTNAMES_SQL, {
+        ...connectionParams(address),
+        domains: page.rows,
+      })
+    : [];
   const groups = new Map<string, IpDnsDomainGroup>();
   for (const row of rows) {
     const group = groups.get(row.root_domain);
@@ -1075,20 +1145,14 @@ export async function getIpAddressDnsRecords(
       lastSeen: row.last_seen,
     });
   }
-  const page = keysetPage(
-    [...groups.values()],
-    IP_DETAIL_PAGE_SIZE,
-    after,
-    (group) => group.rootDomain,
-  );
   return {
     address,
     after: page.after,
     next: page.next,
     total: page.total,
     pageSize: IP_DETAIL_PAGE_SIZE,
-    domains: page.rows,
-    coverage,
+    domains: [...groups.values()],
+    coverage: await coverage,
   };
 }
 

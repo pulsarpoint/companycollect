@@ -135,6 +135,17 @@ describe("one enrichment read per request", () => {
     expect(db.chQuery).toHaveBeenCalledTimes(2);
   });
 
+  it("caps the memo at 1000 entries, evicting the oldest", async () => {
+    db.chQuery.mockResolvedValue([]);
+    const at = (i: number) => ({ ...v4, ip: `10.0.${Math.floor(i / 256)}.${i % 256}` });
+    for (let i = 0; i < 1001; i++) await loadEnrichmentRow(at(i));
+    expect(db.chQuery).toHaveBeenCalledTimes(1001);
+    await loadEnrichmentRow(at(1000));
+    expect(db.chQuery).toHaveBeenCalledTimes(1001);
+    await loadEnrichmentRow(at(0));
+    expect(db.chQuery).toHaveBeenCalledTimes(1002);
+  });
+
   it("overview maps the enrichment row and reads the RDAP marker by bucket", async () => {
     db.chQuery
       .mockResolvedValueOnce([
@@ -269,11 +280,16 @@ describe("keyset pages", () => {
     expect(more.rows).toHaveLength(50);
   });
 
-  it("pages exact-IP domains by root_domain with no OFFSET and no count", async () => {
-    const rows = Array.from({ length: 51 }, (_, i) => connection(`d${String(i).padStart(2, "0")}.example`));
-    db.chQuery.mockImplementation(async (sql: string) =>
-      sql.includes("backfill") ? [{ completed_partitions: "9" }] : rows,
-    );
+  it("reads exact-IP domains in two phases without FINAL, keyset on root_domain", async () => {
+    const domains = Array.from({ length: 51 }, (_, i) => `d${String(i).padStart(2, "0")}.example`);
+    db.chQuery.mockImplementation(async (sql: string, params: { domains?: string[] }) => {
+      if (sql.includes("backfill")) return [{ completed_partitions: "9" }];
+      if (sql.includes("SELECT DISTINCT root_domain")) return domains.map((root_domain) => ({ root_domain }));
+      return (params.domains ?? []).map((domain) => ({
+        ip: v4.ip, version: 4, domain, all_hostnames: [`www.${domain}`, domain], all_sources: ["scan"],
+        all_discoveries: ["apex"], seen_date_count: "3", first_seen_at: "x", last_seen_at: "y",
+      }));
+    });
     const result = await getIpAddressDomains(v4, { after: "c.example" });
     expect(result).toMatchObject({
       scope: "exact",
@@ -283,15 +299,34 @@ describe("keyset pages", () => {
       coverage: { completedPartitions: 9, totalPartitions: 16 },
     });
     expect(result.connections).toHaveLength(50);
-    const [sql, params] = db.chQuery.mock.calls.find(([q]) => String(q).includes("commoncrawl_domain_ip_connections"))!;
-    expect(params).toMatchObject({ ip: v4.ip, version: 4, networkSegment: "185.28.20.0/24", after: "c.example", limit: 51 });
-    expect(sql).toContain("PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)");
-    expect(sql).toMatch(/PREWHERE[\s\S]*root_domain > \{after:String\}[\s\S]*ORDER BY root_domain/);
+    expect(result.connections[0]).toMatchObject({ domain: "d00.example", hostnames: ["d00.example", "www.d00.example"] });
+
+    const [phase1Sql, phase1Params] = db.chQuery.mock.calls.find(([q]) => String(q).includes("SELECT DISTINCT root_domain"))!;
+    const [phase2Sql, phase2Params] = db.chQuery.mock.calls.find(([q]) => String(q).includes("GROUP BY root_domain"))!;
+    for (const sql of [phase1Sql, phase2Sql]) {
+      expect(sql).not.toContain("FINAL");
+      expect(sql).toContain("PREWHERE segment_bucket = toUInt8(cityHash64({networkSegment:String}) % 64)");
+      expect(sql).toContain("address = toIPv6({ip:String})");
+    }
+    expect(phase1Sql).toMatch(/root_domain > \{after:String\}\nORDER BY root_domain\nLIMIT \{limit:UInt32\}\nSETTINGS optimize_read_in_order=1, optimize_distinct_in_order=1/);
+    expect(phase1Params).toMatchObject({ ip: v4.ip, version: 4, networkSegment: "185.28.20.0/24", after: "c.example", limit: 51 });
+    expect(phase2Sql).toContain("root_domain IN {domains:Array(String)}");
+    expect(phase2Sql).toContain("groupUniqArrayArray(hostnames)");
+    expect(phase2Sql).toContain("length(groupUniqArrayArray(seen_dates))");
+    expect(phase2Params.domains).toEqual(domains.slice(0, 50));
     for (const q of sqlCalls()) {
       expect(q).not.toContain("OFFSET");
       expect(q).not.toContain("OVER ()");
     }
-    expect(sqlCalls().filter((q) => q.includes("count()") && !q.includes("backfill"))).toEqual([]);
+  });
+
+  it("skips phase 2 when phase 1 finds no root domains", async () => {
+    db.chQuery.mockResolvedValue([]);
+    const result = await getIpAddressDomains(v4);
+    expect(result).toMatchObject({ connections: [], total: 0, next: null });
+    const dns = await getIpAddressDnsRecords(v4);
+    expect(dns).toMatchObject({ domains: [], total: 0 });
+    expect(sqlCalls().some((q) => q.includes("GROUP BY root_domain"))).toBe(false);
   });
 
   it("keysets the segment neighbourhood on (address, root_domain)", async () => {
@@ -301,6 +336,7 @@ describe("keyset pages", () => {
     const result = await getIpAddressDomains(v4, { scope: "segment", after: "185.28.20.3|m.example" });
     expect(result).toMatchObject({ scope: "segment", next: null, total: null, after: "185.28.20.3|m.example" });
     const [sql, params] = db.chQuery.mock.calls.find(([q]) => String(q).includes("commoncrawl_domain_ip_connections"))!;
+    expect(sql).toContain("AND address >= toIPv6({afterAddress:String})");
     expect(sql).toContain("(address, root_domain) > (toIPv6({afterAddress:String}), {afterDomain:String})");
     expect(sql).toContain("address != toIPv6({ip:String})");
     expect(params).toMatchObject({ afterAddress: "185.28.20.3", afterDomain: "m.example" });
@@ -316,14 +352,14 @@ describe("keyset pages", () => {
 });
 
 describe("DNS tab", () => {
-  it("builds hostname rows from the connections table only, grouped per root domain", async () => {
+  it("builds hostname rows by arrayJoin over phase 2, grouped per root domain", async () => {
     const hostRows = (domain: string, hosts: string[]) =>
       hosts.map((hostname) => ({ root_domain: domain, hostname, type: "A", sources: ["scan"], discoveries: ["apex"], seen_dates: "4", first_seen: "x", last_seen: "y" }));
-    db.chQuery.mockImplementation(async (sql: string) =>
-      sql.includes("backfill")
-        ? [{ completed_partitions: "16" }]
-        : [...hostRows("a.example", ["a.example", "www.a.example"]), ...hostRows("b.example", ["b.example"])],
-    );
+    db.chQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("backfill")) return [{ completed_partitions: "16" }];
+      if (sql.includes("SELECT DISTINCT root_domain")) return [{ root_domain: "a.example" }, { root_domain: "b.example" }];
+      return [...hostRows("a.example", ["a.example", "www.a.example"]), ...hostRows("b.example", ["b.example"])];
+    });
     const result = await getIpAddressDnsRecords(v4);
     expect(result).toMatchObject({ after: "", next: null, total: 2, pageSize: 50 });
     expect(result.domains).toEqual([
@@ -332,14 +368,19 @@ describe("DNS tab", () => {
     ]);
     expect(sqlCalls().some((q) => q.includes("commoncrawl_domain_dns_records"))).toBe(false);
     const [sql, params] = db.chQuery.mock.calls.find(([q]) => String(q).includes("arrayJoin"))!;
-    expect(sql).toContain("FROM commoncrawl_domain_ip_connections FINAL");
-    expect(sql).toMatch(/root_domain > \{after:String\}/);
-    expect(params).toMatchObject({ after: "", limit: 51, version: 4 });
+    expect(sql).toContain("arrayJoin(arraySort(all_hostnames))");
+    expect(sql).toContain("root_domain IN {domains:Array(String)}");
+    expect(sql).not.toContain("FINAL");
+    expect(params).toMatchObject({ domains: ["a.example", "b.example"], version: 4 });
   });
 
-  it("the 51st root domain becomes the next page", async () => {
-    const rows = Array.from({ length: 51 }, (_, i) => ({ root_domain: `d${String(i).padStart(2, "0")}.example`, hostname: "h", type: "AAAA", sources: [], discoveries: [], seen_dates: 1, first_seen: "x", last_seen: "y" }));
-    db.chQuery.mockImplementation(async (sql: string) => (sql.includes("backfill") ? [] : rows));
+  it("the 51st root domain of phase 1 becomes the next page", async () => {
+    const domains = Array.from({ length: 51 }, (_, i) => `d${String(i).padStart(2, "0")}.example`);
+    db.chQuery.mockImplementation(async (sql: string, params: { domains?: string[] }) => {
+      if (sql.includes("backfill")) return [];
+      if (sql.includes("SELECT DISTINCT root_domain")) return domains.map((root_domain) => ({ root_domain }));
+      return (params.domains ?? []).map((root_domain) => ({ root_domain, hostname: "h", type: "AAAA", sources: [], discoveries: [], seen_dates: 1, first_seen: "x", last_seen: "y" }));
+    });
     const result = await getIpAddressDnsRecords(v6, { after: "a" });
     expect(result.domains).toHaveLength(50);
     expect(result).toMatchObject({ next: "d49.example", total: null });
@@ -378,5 +419,10 @@ describe("client helpers", () => {
     expect(ipDnsHistoryHref("2001:db8::1", "a.example", ["x.a.example"])).toBe(
       "/admin/ip-addresses/2001%3Adb8%3A%3A1/dns/a.example?h=x.a.example",
     );
+    // Under the count cap but over 4 KB: no hostnames, the server reads root_domain only.
+    const long = Array.from({ length: 100 }, (_, i) => `${"x".repeat(60)}${i}.a.example`);
+    expect(ipDnsHistoryHref("8.8.8.8", "a.example", long)).toBe("/admin/ip-addresses/8.8.8.8/dns/a.example");
+    const many = Array.from({ length: 201 }, (_, i) => `h${i}.a.example`);
+    expect(ipDnsHistoryHref("8.8.8.8", "a.example", many)).toBe("/admin/ip-addresses/8.8.8.8/dns/a.example");
   });
 });

@@ -68,12 +68,13 @@ it("a tab loader skips its reads when the address is not canonical", async () =>
   expect(db.chQuery).toHaveBeenCalledTimes(1);
 });
 
-it("the history route rejects a bad root domain and turns read failures into records: null", async () => {
+it("the history route answers a bad root domain and a failed read with records: null", async () => {
   db.chQuery.mockResolvedValue(resolved("8.8.8.8", "8.8.8.0/24"));
-  const bad = (await thrown(() =>
-    history.loader(args("8.8.8.8", "/admin/ip-addresses/8.8.8.8/dns/x", { rootDomain: "a b" })),
-  )) as Response;
-  expect(bad.status).toBe(404);
+  const bad = await history.loader(
+    args("8.8.8.8", "/admin/ip-addresses/8.8.8.8/dns/x", { rootDomain: "a b" }),
+  );
+  expect(bad).toEqual({ records: null });
+  expect(db.chQuery).toHaveBeenCalledTimes(1);
 
   db.chQuery.mockReset();
   db.chQuery

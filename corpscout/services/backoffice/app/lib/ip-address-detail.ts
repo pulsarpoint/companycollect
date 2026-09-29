@@ -58,9 +58,25 @@ export function formatPageTotal(
   return total === null ? `${shown.toLocaleString("en-US")}+` : total.toLocaleString("en-US");
 }
 
-export function ipDnsHistoryHref(ip: string, rootDomain: string, hostnames: string[]): string {
+/** Longest history URL the client sends; beyond it the hostname list is dropped. */
+export const DNS_HISTORY_MAX_URL_LENGTH = 4096;
+
+function historyPath(ip: string, rootDomain: string, hostnames: string[]): string {
   const params = new URLSearchParams();
   for (const hostname of hostnames) params.append("h", hostname);
   const query = params.toString();
   return `/admin/ip-addresses/${encodeURIComponent(ip)}/dns/${encodeURIComponent(rootDomain)}${query ? `?${query}` : ""}`;
+}
+
+/**
+ * The record-history URL for one root domain. Hostnames narrow the read (`name IN`), but a
+ * list over the count cap or a URL over 4 KB sends none: the server then reads by
+ * `root_domain =` alone.
+ */
+export function ipDnsHistoryHref(ip: string, rootDomain: string, hostnames: string[]): string {
+  if (hostnames.length <= DNS_HISTORY_MAX_HOSTNAMES) {
+    const withHostnames = historyPath(ip, rootDomain, hostnames);
+    if (withHostnames.length <= DNS_HISTORY_MAX_URL_LENGTH) return withHostnames;
+  }
+  return historyPath(ip, rootDomain, []);
 }

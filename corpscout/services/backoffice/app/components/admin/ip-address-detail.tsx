@@ -45,7 +45,6 @@ import type {
   RdapNetworkRecord,
 } from "~/lib/ip-address-detail.server";
 import {
-  DNS_HISTORY_MAX_HOSTNAMES,
   formatPageTotal,
   IP_DETAIL_TABS,
   type IpDetailTab,
@@ -667,13 +666,11 @@ function DnsRecordHistory({
 }) {
   const fetcher = useFetcher<{ records: IpDnsRecord[] | null }>();
   const [open, setOpen] = useState(false);
-  const hostnames =
-    group.hostnames.length <= DNS_HISTORY_MAX_HOSTNAMES ? group.hostnames : [];
   function toggle() {
     const next = !open;
     setOpen(next);
     if (next && fetcher.state === "idle" && !fetcher.data?.records) {
-      void fetcher.load(ipDnsHistoryHref(ip, group.rootDomain, hostnames));
+      void fetcher.load(ipDnsHistoryHref(ip, group.rootDomain, group.hostnames));
     }
   }
   return (
