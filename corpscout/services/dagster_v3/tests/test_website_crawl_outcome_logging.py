@@ -145,7 +145,7 @@ def test_batch_logs_only_verified_results_and_attaches_failure_table(published_c
             work_key="work",
             run_id="run",
             request_id="crawl-test",
-            request_json=json.dumps({"url": "https://example.se/"}),
+            request_json=json.dumps({"request_id": "crawl-test", "url": "https://example.se/"}),
         )
     ]
     with patch("dagster_v3.defs.website_crawl.matching_batches.sleep"):

@@ -1,13 +1,17 @@
-import ast
 import asyncio
 import json
+import os
+import re
 import sqlite3
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
 
 import httpx
+from clickhouse_driver import Client
 from corpscout_identity.registration import identify_website
 from corpscout_identity.urls import website_reference
 from test_llm_profile import KEY, profile_payload
@@ -194,15 +198,14 @@ class LookupStoreTests(unittest.TestCase):
         self.assertEqual(rows["website_company_lookup_results"][0]["status"], "failed")
 
 
-def parent_response(request):
-    if not request.url.params.get("query", "").startswith("SELECT p.page_id"):
+def parent_rows(query, params, **kwargs):
+    if not query.startswith("SELECT p.page_id"):
         return None
-    ids = ast.literal_eval(request.url.params["param_ids"])
+    ids = params["ids"]
     domains = ["alpha.se", "beta.se", "gamma.se", "delta.se", "epsilon.se", "example.se"] + [f"site-{i}.se" for i in range(6)]
     identities = [identify_website(f"https://{domain}/") for domain in domains]
-    return httpx.Response(200, text="\n".join(json.dumps({
-        "page_id": item.page_id, "website_id": item.website_id, "domain_id": item.domain_id, "page_url": item.page_url
-    }) for item in identities if item.page_id in ids))
+    return [(item.page_id, item.website_id, item.domain_id, item.page_url)
+            for item in identities if item.page_id in ids]
 
 
 class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
@@ -213,6 +216,12 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
             mocked = self.enterContext(patch(target))
             if target.endswith("register_results"):
                 self.registration = mocked
+        self.native_factory = self.enterContext(
+            patch("crawler_service.company_lookup_results.Client.from_url")
+        )
+        self.native = self.native_factory.return_value
+        self.native.execute.side_effect = parent_rows
+
     async def test_four_workers_and_no_publication_before_whole_batch_finishes(self):
         await self.exercise_batch()
 
@@ -230,7 +239,7 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
                 Path(directory),
                 {
                     "CLICKHOUSE_URL": "http://registry",
-                    "CLICKHOUSE_RESULTS_URL": "http://results",
+                    "CLICKHOUSE_RESULTS_NATIVE_URL": "clickhouse://writer:password@results:9000/corpscout",
                     "CRAWLER_LLM_ENCRYPTION_KEY": KEY,
                 },
                 concurrency=1,
@@ -252,21 +261,15 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
                 active -= 1
                 return output
 
-            async def transport(_transport, request):
-                self.assertEqual(request.url.host, "results")
-                parents = parent_response(request)
+            def execute(query, params, **kwargs):
+                parents = parent_rows(query, params)
                 if parents is not None:
                     return parents
-                inserts.append(
-                    (
-                        request.url.params["query"],
-                        [
-                            json.loads(line)
-                            for line in request.content.decode().split("\n")
-                        ],
-                    )
-                )
-                return httpx.Response(200)
+                columns = query.split("(", 1)[1].split(")", 1)[0].split(",")
+                inserts.append((query, [dict(zip(columns, row, strict=True)) for row in params]))
+                return len(params)
+
+            self.native.execute.side_effect = execute
 
             async def until(predicate):
                 async with asyncio.timeout(12):
@@ -275,9 +278,6 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch.object(service, "run_scan", scan),
-                patch.object(
-                    httpx.AsyncHTTPTransport, "handle_async_request", transport
-                ),
             ):
                 async with (
                     app.router.lifespan_context(app),
@@ -367,7 +367,7 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             environment = {
                 "CLICKHOUSE_URL": "http://registry",
-                "CLICKHOUSE_RESULTS_URL": "http://results",
+                "CLICKHOUSE_RESULTS_NATIVE_URL": "clickhouse://writer:password@results:9000/corpscout",
                 "CRAWLER_LLM_ENCRYPTION_KEY": KEY,
             }
             service = CrawlService(
@@ -381,12 +381,7 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
 
             service.run_scan = blocked
 
-            async def transport(_transport, request):
-                return parent_response(request) or httpx.Response(200)
-
-            with patch.object(
-                httpx.AsyncHTTPTransport, "handle_async_request", transport
-            ):
+            with patch("crawler_service.company_lookup_results.Client.from_url", return_value=self.native):
                 await service.start()
                 service.submit_lookup_batch(
                     CompanyLookupBatchRequest(
@@ -481,130 +476,167 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_write_failure_does_not_send_summary_and_can_retry(self):
         attempts = []
         fail = True
+        client = Mock(spec=Client)
 
-        def respond(request):
-            parents = parent_response(request)
+        def execute(query, params, **kwargs):
+            parents = parent_rows(query, params)
             if parents is not None:
                 return parents
-            query = request.url.params["query"]
-            attempts.append(query)
-            return httpx.Response(503 if fail else 200)
+            attempts.append((query, kwargs["settings"]["insert_deduplication_token"]))
+            if fail:
+                raise ConnectionError("writer unavailable")
+            return len(params)
 
-        async with httpx.AsyncClient(
-            base_url="http://results", transport=httpx.MockTransport(respond)
-        ) as http:
-            with self.assertRaises(httpx.HTTPStatusError):
-                await publish(http, [result()])
-            self.assertEqual(len(attempts), 1)
-            fail = False
-            await publish(http, [result()])
-        self.assertIn("website_company_lookup_results", attempts[-1])
+        client.execute.side_effect = execute
+        output = result()
+        with self.assertRaisesRegex(RuntimeError, "ClickHouse insert failed for corpscout.website_site_info_results"):
+            publish(client, [output])
+        self.assertEqual(len(attempts), 1)
+        fail = False
+        publish(client, [output])
+        self.assertEqual(attempts[0], attempts[1])
+        self.assertIn("website_company_lookup_results", attempts[-1][0])
 
 
-class ClickHousePublicationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_real_schema_replay_and_latest_proposal(self):
-        import os
-
-        endpoint = os.getenv("LOOKUP_CLICKHOUSE_TEST_URL")
+class ClickHousePublicationTests(unittest.TestCase):
+    def setUp(self):
+        endpoint = os.getenv("LOOKUP_CLICKHOUSE_TEST_NATIVE_URL")
         if not endpoint:
-            self.skipTest("Set LOOKUP_CLICKHOUSE_TEST_URL to an isolated test database")
-        async with httpx.AsyncClient(base_url=endpoint, timeout=30) as http:
-            migrations = (
-                Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+            self.skipTest("Set LOOKUP_CLICKHOUSE_TEST_NATIVE_URL to an isolated ClickHouse")
+        self.client = Client.from_url(endpoint)
+        self.addCleanup(self.client.disconnect)
+        migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+        for name in (
+            "000429_corpscout_website_crawl_requests",
+            "000430_corpscout_website_crawl_type_results",
+            "000441_corpscout_domains_inventory",
+            "000442_corpscout_websites_and_pages",
+            "000459_corpscout_website_company_lookup_results",
+        ):
+            for statement in (migrations / (name + ".up.sql")).read_text().split(";"):
+                if statement.strip():
+                    self.client.execute(statement)
+        # Apply only the relevant ALTERs from cross-service migrations.
+        for name, tables in (
+            ("000462_corpscout_domains_sources", ("domains", "websites", "pages")),
+            ("000466_corpscout_domain_result_references", tuple(result_rows(result()))),
+        ):
+            source = re.sub(r"--[^\n]*", "", (migrations / (name + ".up.sql")).read_text())
+            for statement in source.split(";"):
+                if any(statement.strip().startswith(f"ALTER TABLE corpscout.{table}\n")
+                       or statement.strip().startswith(f"ALTER TABLE corpscout.{table} ")
+                       for table in tables):
+                    self.client.execute(statement)
+        self.client.execute("CREATE USER IF NOT EXISTS lookup_writer IDENTIFIED WITH plaintext_password BY 'test'")
+        for table in ("domains", "websites", "pages"):
+            self.client.execute(f"GRANT SELECT ON corpscout.{table} TO lookup_writer")
+        for table in result_rows(result()):
+            self.client.execute(f"GRANT INSERT ON corpscout.{table} TO lookup_writer")
+        parsed = urlsplit(endpoint)
+        writer_endpoint = parsed._replace(
+            netloc=f"lookup_writer:test@{parsed.hostname}:{parsed.port or 9000}",
+            path="/corpscout",
+        ).geturl()
+        self.writer = Client.from_url(writer_endpoint)
+        self.addCleanup(self.writer.disconnect)
+
+    def register(self, urls):
+        now = datetime.now(UTC)
+        for url in urls:
+            identity = identify_website(url)
+            self.client.execute(
+                "INSERT INTO corpscout.domains (root_domain,sources,first_seen_at,last_seen_at,source_run_id) VALUES",
+                [(identity.root_domain, ["test"], now, now, "test")],
             )
-            for name in (
-                "000429_corpscout_website_crawl_requests",
-                "000430_corpscout_website_crawl_type_results",
-                "000459_corpscout_website_company_lookup_results",
-            ):
-                # These two migrations contain no procedural SQL or semicolons in literals.
-                for statement in (
-                    (migrations / (name + ".up.sql")).read_text().split(";")
-                ):
-                    if statement.strip():
-                        response = await http.post("", content=statement.encode())
-                        self.assertEqual(response.status_code, 200, response.text)
-            matched = result("integration.se")
-            matched.update(
-                status="matched",
-                found=True,
+            self.client.execute(
+                "INSERT INTO corpscout.websites (root_domain,website_origin,sources,first_seen_at,last_seen_at,source_run_id) VALUES",
+                [(identity.root_domain, identity.website_origin, ["test"], now, now, "test")],
+            )
+            self.client.execute(
+                "INSERT INTO corpscout.pages (root_domain,website_origin,page_url,sources,first_seen_at,last_seen_at,source_run_id) VALUES",
+                [(identity.root_domain, identity.website_origin, identity.page_url, ["test"], now, now, "test")],
+            )
+
+    def test_real_schema_replay_and_latest_proposal(self):
+        matched = result("integration.se")
+        matched.update(
+            status="matched",
+            found=True,
+            company_id="5560123456",
+            confidence=0.98,
+            candidates=[
+                dict(
+                    company_id="5560123456",
+                    legal_name="Example AB",
+                    status="active",
+                    primary_city=None,
+                )
+            ],
+            assessment=dict(
                 company_id="5560123456",
                 confidence=0.98,
-                candidates=[
-                    dict(
-                        company_id="5560123456",
-                        legal_name="Example AB",
-                        status="active",
-                        primary_city=None,
-                    )
-                ],
-                assessment=dict(
-                    company_id="5560123456",
-                    confidence=0.98,
-                    basis="registration_number",
-                    reasons=["Exact ID"],
-                ),
-                identity=[
-                    dict(
-                        kind="registration_number",
-                        value="556012-3456",
-                        normalized_company_id="5560123456",
-                        source_url="https://integration.se/",
-                        quote="Org nr: 556012-3456",
-                    )
-                ],
-                searches=[
-                    dict(
-                        query_id="query",
-                        kind="registration_number",
-                        table="corpscout.se_companies_serving",
-                        sql="SELECT company_id WHERE company_id={value:String}",
-                        parameters={"value": "5560123456"},
-                        status="completed",
-                        row_count=1,
-                        rows=[{"company_id": "5560123456"}],
-                    )
-                ],
-            )
-            await publish(http, [matched])
-            await publish(http, [matched])
-            for table, rows in result_rows(matched).items():
-                if not rows:
-                    continue
-                response = await http.post(
-                    "",
-                    content=f"SELECT count() FROM corpscout.{table} FINAL WHERE domain='integration.se'".encode(),
+                basis="registration_number",
+                reasons=["Exact ID"],
+            ),
+            identity=[
+                dict(
+                    kind="registration_number",
+                    value="556012-3456",
+                    normalized_company_id="5560123456",
+                    source_url="https://integration.se/",
+                    quote="Org nr: 556012-3456",
                 )
-                self.assertEqual(response.status_code, 200, response.text)
-                self.assertEqual(response.text.strip(), "1", table)
-            latest = result("integration.se")
-            latest["request_id"] = "new-lookup"
-            await publish(http, [latest])
-            response = await http.post(
-                "",
-                content=b"SELECT count() FROM corpscout.website_company_lookup_proposals WHERE domain='integration.se'",
-            )
-            self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(response.text.strip(), "0")
-
-            # Full collection success survives a matching failure, with the same request identity.
-            full = result("full.se", failed=True)
-            full.update(crawl_type="full", request_id="full-crawl", input_revision=9,
-                crawl_result=full["site_info_result"])
-            await publish(http, [full])
-            await publish(http, [full])
-            response = await http.post("", content=b"SELECT request_id, input_revision, successful, company_matching_status FROM corpscout.website_full_crawl_results FINAL WHERE domain='full.se' FORMAT JSONEachRow")
-            self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(json.loads(response.text), dict(request_id="full-crawl", input_revision=9, successful=True, company_matching_status="failed"))
-            # Match prechecks read active, country-scoped associations, including review overrides in the production view.
-            await http.post("", content=b"CREATE TABLE corpscout.se_company_domain_resolved (country_code String, root_domain String, company_id String, is_active Bool) ENGINE=Memory")
-            response = await http.post("", content=b"INSERT INTO corpscout.se_company_domain_resolved VALUES ('SE', 'mapped.se', '5560123456', true), ('SE', 'mapped.se', '5560999999', false), ('NO', 'mapped.se', '5560888888', true)")
-            self.assertEqual(response.status_code, 200, response.text)
-            from crawler_service.company_search import search_companies
-            searches = []
-            mapped = await search_companies(http, kind="existing_mapping", value="www.mapped.se", searches=searches)
-            self.assertEqual(mapped, [{"company_id": "5560123456"}])
-            self.assertEqual(searches[0]["row_count"], 1)
+            ],
+            searches=[
+                dict(
+                    query_id="query",
+                    kind="registration_number",
+                    table="corpscout.se_companies_serving",
+                    sql="SELECT company_id WHERE company_id={value:String}",
+                    parameters={"value": "5560123456"},
+                    status="completed",
+                    row_count=1,
+                    rows=[{"company_id": "5560123456"}],
+                )
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "missing registered"):
+            publish(self.writer, [matched])
+        self.assertEqual(self.client.execute("SELECT count() FROM corpscout.website_company_lookup_results"), [(0,)])
+        self.register([matched["website_url"], "https://full.se/"])
+        publish(self.writer, [matched])
+        publish(self.writer, [matched])
+        for table, rows in result_rows(matched).items():
+            if rows:
+                self.assertEqual(self.client.execute(
+                    f"SELECT count() FROM corpscout.{table} FINAL WHERE domain='integration.se'"
+                ), [(1,)], table)
+        # Native encoding preserves Map, nullable values, arrays, Enum, Bool and microseconds.
+        self.assertEqual(self.client.execute(
+            "SELECT parameters,http_status FROM corpscout.website_company_lookup_searches FINAL"
+        ), [({"value": '"5560123456"'}, None)])
+        self.assertEqual(self.client.execute(
+            "SELECT primary_city,confidence,reasons FROM corpscout.website_company_lookup_candidates FINAL"
+        ), [("", 0.98, ["Exact ID"])])
+        saved = self.client.execute(
+            "SELECT state,successful,finished_at FROM corpscout.website_site_info_results FINAL WHERE domain='integration.se'"
+        )[0]
+        self.assertEqual(saved[:2], ("completed", True))
+        self.assertEqual(saved[2], datetime.fromisoformat(matched["finished_at"]))
+        latest = result("integration.se")
+        latest["request_id"] = "new-lookup"
+        publish(self.writer, [latest])
+        self.assertEqual(self.client.execute(
+            "SELECT count() FROM corpscout.website_company_lookup_proposals WHERE domain='integration.se'"
+        ), [(0,)])
+        full = result("full.se", failed=True)
+        full.update(crawl_type="full", request_id="full-crawl", input_revision=9,
+                    crawl_result=full["site_info_result"])
+        publish(self.writer, [full])
+        publish(self.writer, [full])
+        self.assertEqual(self.client.execute(
+            "SELECT request_id,input_revision,successful,company_matching_status FROM corpscout.website_full_crawl_results FINAL WHERE domain='full.se'"
+        ), [("full-crawl", 9, True, "failed")])
 
 
 def test_legacy_batch_identity_enrichment_does_not_change_frozen_settings(tmp_path):

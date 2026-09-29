@@ -2,16 +2,17 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlencode, urlsplit
 
-import httpx
+from clickhouse_driver import Client
 from corpscout_identity.observations import crawl_observations
 from corpscout_identity.observations import timestamp as observation_time
 from corpscout_identity.urls import website_reference
 
 
 def timestamp(value: str) -> str:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime(
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC).strftime(
         "%Y-%m-%d %H:%M:%S.%f"
     )
 
@@ -236,7 +237,21 @@ def result_rows(result: dict) -> dict[str, list[dict]]:
     return rows
 
 
-async def publish(http: httpx.AsyncClient, results: list[dict]) -> None:
+def deliver(environment: dict[str, str], results: list[dict]) -> None:
+    endpoint = environment["CLICKHOUSE_RESULTS_NATIVE_URL"]
+    parsed = urlsplit(endpoint)
+    if parsed.scheme not in {"clickhouse", "clickhouses"} or parsed.hostname is None:
+        raise ValueError("Expected a native ClickHouse result connection URL")
+    options = parse_qs(parsed.query)
+    options.setdefault("send_receive_timeout", ["60"])
+    client = Client.from_url(parsed._replace(query=urlencode(options, doseq=True)).geturl())
+    try:
+        publish(client, results)
+    finally:
+        client.disconnect()
+
+
+def publish(client: Client, results: list[dict]) -> None:
     grouped: dict[str, list[dict]] = {}
     for result in results:
         for table, rows in result_rows(result).items():
@@ -258,31 +273,28 @@ async def publish(http: httpx.AsyncClient, results: list[dict]) -> None:
                 identity.page_url,
             )
     ids = list(expected)
-    for start in range(0, len(ids), 10000):
-        group = ids[start : start + 10000]
-        response = await http.post(
-            "",
-            params={
-                "query": """SELECT p.page_id AS page_id, w.website_id AS website_id, d.domain_id AS domain_id, p.page_url AS page_url
+    # Native parameters expand into SQL; 1,000 pages and their parent IDs stay
+    # below ClickHouse's default 256 KiB max_query_size even without shared parents.
+    for start in range(0, len(ids), 1000):
+        group = ids[start : start + 1000]
+        try:
+            rows = client.execute(
+                """SELECT p.page_id, w.website_id, d.domain_id, p.page_url
                 FROM corpscout.pages AS p
                 INNER JOIN (SELECT website_id,domain_id FROM corpscout.websites
-                    WHERE website_id IN {websites:Array(String)}) AS w ON p.website_id=w.website_id
+                    WHERE website_id IN %(websites)s) AS w ON p.website_id=w.website_id
                 INNER JOIN (SELECT domain_id FROM corpscout.domains
-                    WHERE domain_id IN {domains:Array(String)}) AS d ON w.domain_id=d.domain_id
-                WHERE p.page_id IN {ids:Array(String)} FORMAT JSONEachRow""",
-                "param_ids": repr(
-                    group
-                ),  # ClickHouse Array(String) query-parameter syntax; IDs are hex.
-                "param_websites": repr(sorted({expected[key][0] for key in group})),
-                "param_domains": repr(sorted({expected[key][1] for key in group})),
-            },
-        )
-        response.raise_for_status()
-        rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
-        found = {
-            row["page_id"]: (row["website_id"], row["domain_id"], row["page_url"])
-            for row in rows
-        }
+                    WHERE domain_id IN %(domains)s) AS d ON w.domain_id=d.domain_id
+                WHERE p.page_id IN %(ids)s""",
+                {
+                    "ids": tuple(group),
+                    "websites": tuple(sorted({expected[key][0] for key in group})),
+                    "domains": tuple(sorted({expected[key][1] for key in group})),
+                },
+            )
+        except Exception as error:
+            raise RuntimeError("ClickHouse parent verification failed") from error
+        found = {row[0]: row[1:] for row in rows}
         if len(rows) != len(group) or found != {key: expected[key] for key in group}:
             raise ValueError(
                 "Result destination is missing registered website/page parents"
@@ -294,13 +306,25 @@ async def publish(http: httpx.AsyncClient, results: list[dict]) -> None:
         body = "\n".join(
             json.dumps(row, ensure_ascii=False, allow_nan=False) for row in rows
         )
-        response = await http.post(
-            "",
-            params={
-                "query": f"INSERT INTO corpscout.{table} FORMAT JSONEachRow",
-                "async_insert": 0,
-                "insert_deduplication_token": hashlib.sha256(body.encode()).hexdigest(),
-            },
-            content=body.encode(),
-        )
-        response.raise_for_status()
+        columns = tuple(rows[0])
+        values = [
+            tuple(
+                datetime.fromisoformat(row[column]).replace(tzinfo=UTC)
+                if column in {"started_at", "finished_at", "ingested_at"}
+                and row[column] is not None
+                else row[column]
+                for column in columns
+            )
+            for row in rows
+        ]
+        try:
+            client.execute(
+                f"INSERT INTO corpscout.{table} ({','.join(columns)}) VALUES",
+                values,
+                settings={
+                    "async_insert": 0,
+                    "insert_deduplication_token": hashlib.sha256(body.encode()).hexdigest(),
+                },
+            )
+        except Exception as error:
+            raise RuntimeError(f"ClickHouse insert failed for corpscout.{table}") from error

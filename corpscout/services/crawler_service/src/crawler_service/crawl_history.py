@@ -7,9 +7,10 @@ from pathlib import Path
 
 class CrawlHistory:
     def __init__(self, path: Path):
-        self.connection = sqlite3.connect(path)
+        self.connection = sqlite3.connect(path, uri=True)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript("""
+            PRAGMA auto_vacuum=INCREMENTAL;
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS attempts (
@@ -136,6 +137,52 @@ class CrawlHistory:
                 "AND json_extract(job, '$.s3_state') = 'pending' ORDER BY updated_at LIMIT 100"
             )
         ]
+
+    def prune(self, before: str, *, lookup_path: Path, limit: int = 100) -> dict[str, int]:
+        """Expire old delivered status events; keep attempt summaries for retries."""
+        if limit < 1:
+            raise ValueError("Retention limit must be positive")
+        # Opening read-only also prevents a typo from creating an empty lookup
+        # database. The bound URI safely supports spaces and other path text.
+        self.connection.execute(
+            "ATTACH DATABASE ? AS lookup_retention",
+            (lookup_path.resolve().as_uri() + "?mode=ro",),
+        )
+        try:
+            with self.connection:
+                count = self.connection.execute(
+                    """DELETE FROM events WHERE id IN (
+                        SELECT e.id FROM events e JOIN attempts a
+                            ON a.request_id=e.request_id AND a.attempt=e.attempt
+                        WHERE e.created_at < ?
+                            AND coalesce(json_extract(a.job,'$.finished_at'),a.updated_at) < ?
+                            AND a.state IN ('completed','failed','cancelled')
+                            AND e.id < (SELECT max(id) FROM events)
+                            AND (
+                                (coalesce(json_extract(a.job,'$.purpose'),'crawl')='crawl'
+                                    AND json_extract(a.job,'$.s3_state')='uploaded')
+                                OR (json_extract(a.job,'$.purpose')='company_lookup'
+                                    AND EXISTS (
+                                        SELECT 1 FROM lookup_retention.publications p
+                                        WHERE p.request_id=a.request_id AND p.attempt=a.attempt
+                                            AND p.published_at < ?
+                                    ))
+                            )
+                        ORDER BY e.id LIMIT ?
+                    )""",
+                    (before, before, before, limit),
+                ).rowcount
+        finally:
+            self.connection.execute("DETACH DATABASE lookup_retention")
+        if self.connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2:
+            self.connection.execute("PRAGMA incremental_vacuum(128)").fetchall()
+        self.connection.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+        page_size = self.connection.execute("PRAGMA page_size").fetchone()[0]
+        return {
+            "events": count,
+            "reusable_bytes": self.connection.execute("PRAGMA freelist_count").fetchone()[0] * page_size,
+            "database_bytes": self.connection.execute("PRAGMA page_count").fetchone()[0] * page_size,
+        }
 
     def close(self) -> None:
         self.connection.close()

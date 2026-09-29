@@ -3,12 +3,15 @@
 import asyncio
 import hmac
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 
 import httpx
+import psycopg2
 from fastapi import (
     Depends,
     FastAPI,
@@ -30,6 +33,7 @@ from crawler_service.company_lookup import (
 from crawler_service.debug_trace import read_trace
 from crawler_service.identity_registration import register_requests
 from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
+from crawler_service.logging_errors import error_details
 from crawler_service.service import (
     TERMINAL_STATES,
     AgentModel,
@@ -41,6 +45,8 @@ from crawler_service.service import (
     RequestConflict,
     ServiceUnavailable,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RetryRequest(BaseModel):
@@ -99,13 +105,32 @@ def create_app(
         return {"status": "ok"}
 
     async def register_admission(requests: list[CrawlRequest], run_id: str) -> None:
+        started = monotonic()
         try:
             await asyncio.to_thread(register_requests, service.environment,
                 [request.model_dump() for request in requests], run_id=run_id)
         except Exception as error:
+            endpoint = service.environment.get("CLICKHOUSE_NATIVE_URL", "")
+            cause = error
+            for _ in range(5):
+                if isinstance(cause, psycopg2.Error):
+                    endpoint = service.environment.get("PROCESSING_PG_URL", "")
+                    break
+                if cause.__cause__ is None:
+                    break
+                cause = cause.__cause__
+            LOGGER.warning(
+                "Crawl admission failed: run_id=%s requests=%s duration_ms=%.0f error=%s",
+                run_id, len(requests), (monotonic() - started) * 1000,
+                error_details(error, endpoint=endpoint, operation="register_admission"),
+            )
             # Keep database URLs, credentials and SQL out of REST errors.
             raise HTTPException(503, "Central website registration failed; no new crawl was admitted",
                 headers={"Retry-After": "5"}) from error
+        LOGGER.info(
+            "Crawl admission registered: run_id=%s requests=%s duration_ms=%.0f",
+            run_id, len(requests), (monotonic() - started) * 1000,
+        )
 
     @app.post(
         "/v1/crawls",
@@ -142,7 +167,12 @@ def create_app(
     @app.post("/v1/crawl-batches", status_code=202, dependencies=[Depends(authenticate)])
     async def crawl_batch(request: CrawlBatchRequest):
         try:
-            await register_admission([entry.request for entry in request.entries], request.batch_id)
+            if service.lookup_store is None:
+                raise ServiceUnavailable("Crawler is not accepting batches")
+            if service.lookup_store.snapshot(request.batch_id) is None:
+                await register_admission([entry.request for entry in request.entries], request.batch_id)
+            # Saved batches already passed central registration. Submission still
+            # checks the full payload and credentials before reattaching/resuming.
             return service.submit_crawl_batch(request)
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
@@ -154,8 +184,11 @@ def create_app(
     @app.post("/v1/company-lookup-batches", status_code=202, dependencies=[Depends(authenticate)])
     async def lookup_batch(request: CompanyLookupBatchRequest):
         try:
-            await register_admission([CrawlRequest(url=f"https://{domain}/", site_info=True)
-                for domain in request.domains], request.batch_id)
+            if service.lookup_store is None:
+                raise ServiceUnavailable("Crawler is not accepting batches")
+            if service.lookup_store.snapshot(request.batch_id) is None:
+                await register_admission([CrawlRequest(url=f"https://{domain}/", site_info=True)
+                    for domain in request.domains], request.batch_id)
             return service.submit_lookup_batch(request)
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
@@ -188,7 +221,7 @@ def create_app(
         document = json.loads(path.read_text())
         assert service.lookup_store is not None
         receipt = service.lookup_store.receipt(request_id, attempt)
-        if not service.environment.get("CLICKHOUSE_RESULTS_URL") and receipt["state"] != "published":
+        if not service.environment.get("CLICKHOUSE_RESULTS_NATIVE_URL") and receipt["state"] != "published":
             receipt["error"] = "ClickHouse result writer is not configured; delivery remains queued"
         document.update(publication=receipt, persisted_to_database=receipt["state"] == "published")
         return JSONResponse(document, headers={"Cache-Control": "no-store"})

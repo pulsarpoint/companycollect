@@ -236,7 +236,7 @@ describe("adoption tabs", () => {
 });
 
 describe("domains tab", () => {
-  it("renders rank, an outbound domain link, and the formatted harmonic centrality, in the server's centrality order", () => {
+  it("renders rank and outbound domain links in server order without centrality scores", () => {
     const html = render(detail({}), null, {
       tab: "domains",
       rows: [
@@ -257,9 +257,11 @@ describe("domains tab", () => {
 
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('target="_blank"');
-    expect(html).toContain("21,534,096.5");
+    expect(html).toContain(">Rank<");
+    expect(html).not.toContain(">Harmonic centrality<");
+    expect(html).not.toContain("21,534,096.5");
     expect(html).toContain('href="https://second.example"');
-    expect(html).toContain("987,654.25");
+    expect(html).not.toContain("987,654.25");
     // The rollup orders by centrality desc; the table keeps that order.
     expect(html.indexOf("example.com")).toBeLessThan(
       html.indexOf("second.example"),

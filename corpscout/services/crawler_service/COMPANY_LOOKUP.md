@@ -282,12 +282,22 @@ country/domain. `website_company_lookup_proposals` selects only matched rows fro
 those newest attempts. A newer unresolved attempt never resurrects an older proposal.
 Joining these proposals into `se_domains` or another country list is a separate step.
 
-Set `CLICKHOUSE_RESULTS_URL`, `CLICKHOUSE_RESULTS_USER`, and
-`CLICKHOUSE_RESULTS_PASSWORD` on the crawler. Use a separate writer with `INSERT`
-only on the six result tables above, against the same database Dagster reads.
-The corresponding Ansible variables start with `crawler_service_clickhouse_results_`.
-No runtime DDL or registry/domain-table writes are performed. Dagster owns the
-existing crawl queue membership and request tables.
+Set `CLICKHOUSE_RESULTS_NATIVE_URL` on the crawler, for example
+`clickhouse://crawler_lookup_writer:password@companycollect:9002/corpscout`.
+Percent-encode credentials containing URL special characters. Use a separate writer
+with `INSERT` on the six result tables above and `SELECT` on `domains`, `websites`,
+and `pages`, against the same database Dagster reads. The Ansible variable is
+`crawler_service_clickhouse_results_native_url`. This native writer replaces the
+old result HTTP URL/user/password settings. Company-registry search settings stay
+separate. Publication verifies registered parents, writes basic/child results,
+and writes the summary last; it performs no runtime DDL. Native parent registration
+uses its own connection and credentials before publication.
 Single tests retain pending local delivery when a writer is unavailable; batch
 admission requires a configured writer endpoint. Backoffice shows pending/error
 status until publication succeeds.
+
+Delivered SQLite payloads and status events expire after one day by default
+(`CRAWL_SQLITE_RETENTION_DAYS=1`). Cleanup preserves compact delivery receipts,
+batch metadata, attempt summaries, pending writes, and unfinished S3 uploads.
+Warnings include the sanitized destination, operation, and database error code;
+unchanged publication warnings repeat at most once per minute while retries continue.

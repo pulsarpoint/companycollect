@@ -36,11 +36,6 @@ import type {
 } from "~/lib/technologies.server";
 
 const nf = new Intl.NumberFormat("en-US");
-/** Harmonic centrality is a Float64 score, not a count -- keep a couple of
- * decimals so nearby domains stay distinguishable. */
-const centralityFormat = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 2,
-});
 
 /**
  * The adoption section's per-tab loader data -- only the ACTIVE tab's rollup
@@ -166,7 +161,7 @@ function domainColumns(): ColumnDef<TechnologyDomainRow, unknown>[] {
   return [
     {
       id: "harmonic_rank",
-      header: "#",
+      header: "Rank",
       cell: ({ row }) => (
         <span className="text-muted-foreground tabular-nums">
           {row.original.harmonic_rank}
@@ -186,15 +181,6 @@ function domainColumns(): ColumnDef<TechnologyDomainRow, unknown>[] {
           {row.original.root_domain}
           <ExternalLink className="size-3.5" />
         </a>
-      ),
-    },
-    {
-      id: "harmonic_centrality",
-      header: "Harmonic centrality",
-      cell: ({ row }) => (
-        <span className="tabular-nums">
-          {centralityFormat.format(row.original.harmonic_centrality)}
-        </span>
       ),
     },
   ];

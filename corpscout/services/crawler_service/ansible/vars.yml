@@ -33,6 +33,7 @@ crawler_service_manual_concurrency: 2
 crawler_service_browser_api_url: http://127.0.0.1:8081
 crawler_service_browser_api_token: "{{ lookup('ansible.builtin.env', 'BROWSER_API_TOKEN') }}"
 crawler_service_max_pending: 100
+crawler_service_sqlite_retention_days: 1
 
 # Read-only company registry searches. These credentials are never included in requests.
 crawler_service_clickhouse_url: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_URL') }}"
@@ -54,11 +55,9 @@ crawler_service_openrouter: "{{ lookup('ansible.builtin.env', 'OPENROUTER_API_KE
 crawler_service_api_token: "{{ lookup('ansible.builtin.env', 'CRAWL_API_TOKEN') }}"
 crawler_service_llm_encryption_key: "{{ lookup('ansible.builtin.env', 'CRAWLER_LLM_ENCRYPTION_KEY') }}"
 
-# Dedicated writer: INSERT only on basic/full crawl results and the four lookup tables.
+# Dedicated writer: central-parent SELECT; INSERT on basic/full and four lookup tables.
 crawler_service_lookup_concurrency: 4
-crawler_service_clickhouse_results_url: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_URL') }}"
-crawler_service_clickhouse_results_user: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_USER') }}"
-crawler_service_clickhouse_results_password: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_PASSWORD') }}"
+crawler_service_clickhouse_results_native_url: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_NATIVE_URL') }}"
 crawler_service_lookup_timeout_seconds: 900
 
 # Central identities use the same PostgreSQL database as Dagster publication guards.
