@@ -23,7 +23,7 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE, assert_clickhouse_tables_exist
-from dagster_v3.defs.dns_detect import sql
+from dagster_v3.defs.dns_detect import intervals, sql
 from dagster_v3.defs.dns_detect.resource import DEFAULT_API_URL, DnsDetectResource
 
 GROUP_NAME = "dns_detect"
@@ -194,7 +194,33 @@ def _previous_metadata(context: AssetExecutionContext) -> dict | None:
     return {k: getattr(v, "value", v) for k, v in records[0].asset_materialization.metadata.items()}
 
 
-dns_record_services_job = dg.define_asset_job(name=JOB_NAME, selection=dg.AssetSelection.assets(dns_record_services_clickhouse))
+@dg.asset(
+    name="domain_service_intervals_clickhouse",
+    group_name=GROUP_NAME,
+    kinds={"clickhouse"},
+    partitions_def=PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="dns_detect_intervals",
+    deps=[dns_record_services_clickhouse],
+    description=(
+        "Service usage periods per domain (corpscout.domain_service_intervals) and distinct domains per "
+        "provider and service type (corpscout.provider_service_counts), migration 000470. Rebuilt whole per "
+        "bucket from dns_record_services with the domain_services_history rules and swapped in by REPLACE PARTITION."
+    ),
+)
+def domain_service_intervals_clickhouse(context: AssetExecutionContext, clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=RESOLVED_DATABASE,
+                                   tables=(sql.RESOLUTIONS_TABLE, sql.SERVICES_TABLE, sql.INTERVALS_TABLE, sql.COUNTS_TABLE))
+    bucket = sql.partition_bucket(context.partition_key)
+    started = datetime.now(UTC)
+    with clickhouse.get_connection() as client:
+        counts = intervals.rebuild_bucket(client, RESOLVED_DATABASE, bucket, context.log)
+    return dg.MaterializeResult(metadata={**counts, "seconds": round((datetime.now(UTC) - started).total_seconds(), 1)})
+
+
+dns_record_services_job = dg.define_asset_job(
+    name=JOB_NAME, selection=dg.AssetSelection.assets(dns_record_services_clickhouse, domain_service_intervals_clickhouse)
+)
 
 _ACTIVE = [dg.DagsterRunStatus.QUEUED, dg.DagsterRunStatus.NOT_STARTED, dg.DagsterRunStatus.STARTING, dg.DagsterRunStatus.STARTED]
 
@@ -231,7 +257,7 @@ def dns_detect_knowledge_sensor(context: dg.SensorEvaluationContext, dns_detect:
 
 
 defs = dg.Definitions(
-    assets=[dns_record_services_clickhouse],
+    assets=[dns_record_services_clickhouse, domain_service_intervals_clickhouse],
     jobs=[dns_record_services_job],
     schedules=[dns_record_services_daily],
     sensors=[dns_detect_knowledge_sensor],
