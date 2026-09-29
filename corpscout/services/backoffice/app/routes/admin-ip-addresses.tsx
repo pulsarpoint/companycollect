@@ -132,7 +132,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   ]);
   // An empty page on a never-built table says so instead of "no matches".
   const notBuilt =
-    list.rows.length === 0 && !list.hasMore
+    list.rows.length === 0
       ? !(await ipSearchTableBuilt().catch(() => true))
       : false;
   return { ...list, filters, labels, notBuilt };
