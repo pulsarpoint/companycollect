@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: render-better
+display_name: "Render Better"
+category: saas
+website: https://www.renderbetter.com
+aliases: ["Render Better"]
+provider_keys: ["renderbetter.app"]
+services:
+  - key: render-better.hosting
+    display_name: "Render Better hosting"
+    service_types: [hosting]
+    note: "Ported from technology_fingerprints (Render Better)."
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "renderbetter.app"}

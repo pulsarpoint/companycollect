@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: dynatrace
+display_name: "Dynatrace"
+category: saas
+website: https://www.dynatrace.com
+aliases: ["Dynatrace"]
+provider_keys: []
+services:
+  - key: dynatrace.verification
+    display_name: "Dynatrace domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Dynatrace)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "dynatrace-site-verification="}

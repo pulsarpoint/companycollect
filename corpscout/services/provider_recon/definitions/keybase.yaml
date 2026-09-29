@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: keybase
+display_name: "Keybase"
+category: security
+website: https://keybase.io/
+aliases: ["Keybase"]
+provider_keys: []
+services:
+  - key: keybase.verification
+    display_name: "Keybase domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Keybase)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "keybase-site-verification"}

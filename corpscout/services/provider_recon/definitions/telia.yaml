@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: telia
+display_name: "Telia"
+category: email
+website: https://www.telia.se
+aliases: ["Telia", "Telia Email"]
+provider_keys: ["telia.com", "telia.se"]
+services:
+  - key: telia.email
+    display_name: "Telia Email"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (Telia Email)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "telia.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "telia.se"}

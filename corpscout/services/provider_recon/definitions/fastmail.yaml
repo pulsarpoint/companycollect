@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: fastmail
+display_name: "Fastmail"
+category: email
+website: https://www.fastmail.com
+aliases: ["Fastmail"]
+provider_keys: ["messagingengine.com"]
+services:
+  - key: fastmail.mail
+    display_name: "Fastmail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (Fastmail)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "messagingengine.com"}

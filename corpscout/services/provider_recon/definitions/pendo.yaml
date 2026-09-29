@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: pendo
+display_name: "Pendo"
+category: saas
+website: https://www.pendo.io
+aliases: ["Pendo"]
+provider_keys: []
+services:
+  - key: pendo.verification
+    display_name: "Pendo domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Pendo)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "pendo-domain-verification="}

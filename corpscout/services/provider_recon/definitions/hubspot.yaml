@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./schema.json
+slug: hubspot
+display_name: "HubSpot"
+category: email
+website: https://www.hubspot.com
+aliases: ["HubSpot"]
+provider_keys: ["hubspotemail.net"]
+services:
+  - key: hubspot.sending
+    display_name: "HubSpot outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (HubSpot)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "hubspotemail.net"}
+  - key: hubspot.verification
+    display_name: "HubSpot domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (HubSpot)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "hubspot-developer-verification"}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "hubspot-domain-verification"}

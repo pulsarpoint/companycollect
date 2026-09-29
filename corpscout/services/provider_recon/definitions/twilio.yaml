@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: twilio
+display_name: "Twilio"
+category: saas
+website: https://www.twilio.com
+aliases: ["Twilio"]
+provider_keys: []
+services:
+  - key: twilio.verification
+    display_name: "Twilio domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Twilio)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "twilio-domain-verification="}

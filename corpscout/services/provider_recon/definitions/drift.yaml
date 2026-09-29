@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: drift
+display_name: "Drift"
+category: saas
+website: https://www.drift.com/
+aliases: ["Drift"]
+provider_keys: []
+services:
+  - key: drift.verification
+    display_name: "Drift domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Drift)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "drift-domain-verification="}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: box
+display_name: "Box"
+category: saas
+website: https://www.box.com
+aliases: ["Box"]
+provider_keys: []
+services:
+  - key: box.verification
+    display_name: "Box domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Box)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "box-domain-verification="}

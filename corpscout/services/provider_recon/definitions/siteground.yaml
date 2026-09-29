@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: siteground
+display_name: "SiteGround"
+category: hosting
+website: https://www.siteground.com
+aliases: ["SiteGround"]
+provider_keys: ["sgvps.net", "siteground.net"]
+services:
+  - key: siteground.dns
+    display_name: "SiteGround DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (SiteGround)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "sgvps.net"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "siteground.net"}

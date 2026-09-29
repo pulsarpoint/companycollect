@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=./schema.json
+slug: sakura-internet
+display_name: "Sakura Internet"
+category: hosting
+website: https://www.sakura.ad.jp
+aliases: ["Sakura Internet"]
+provider_keys: ["dns.ne.jp", "sakura.ad.jp"]
+services:
+  - key: sakura-internet.dns
+    display_name: "Sakura Internet DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Sakura Internet)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: regex, pattern: '(^|\.)gslb[0-9]+\.sakura\.ne\.jp$'}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "tech.sakura.ad.jp"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dns.ne.jp"}

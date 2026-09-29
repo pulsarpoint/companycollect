@@ -28,6 +28,12 @@ services:
     service_types: [email]
     dns_rules:
       - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mx.cloudflare.net"}
+  - key: cloudflare.verification
+    display_name: "Cloudflare domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Cloudflare)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "cloudflare_dashboard_sso="}
 feeds:
   - collector: cloudflare_ips
     tag_map: {CLOUDFLARE: cloudflare.edge}

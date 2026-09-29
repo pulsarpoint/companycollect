@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: knowbe4
+display_name: "KnowBe4"
+category: security
+website: https://www.knowbe4.com
+aliases: ["KnowBe4"]
+provider_keys: []
+services:
+  - key: knowbe4.verification
+    display_name: "KnowBe4 domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (KnowBe4)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "knowbe4-site-verification="}

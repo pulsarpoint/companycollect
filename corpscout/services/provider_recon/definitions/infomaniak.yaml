@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: infomaniak
+display_name: "Infomaniak"
+category: hosting
+website: https://www.infomaniak.com
+aliases: ["Infomaniak"]
+provider_keys: ["infomaniak.ch"]
+services:
+  - key: infomaniak.dns
+    display_name: "Infomaniak DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Infomaniak)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "infomaniak.ch"}
+  - key: infomaniak.sending
+    display_name: "Infomaniak outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Infomaniak)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "spf.infomaniak.ch"}

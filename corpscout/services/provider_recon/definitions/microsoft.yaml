@@ -5,7 +5,7 @@ category: cloud
 website: https://www.microsoft.com
 country: US
 aliases: ["Microsoft", "Microsoft Corporation", "Azure", "Microsoft 365"]
-provider_keys: ["outlook.com", "onmicrosoft.com", "microsoftonline.com", "azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info", "azurewebsites.net", "azurefd.net", "azureedge.net", "azure.com", "windows.net"]
+provider_keys: ["outlook.com", "onmicrosoft.com", "microsoftonline.com", "azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info", "azurewebsites.net", "azurefd.net", "azureedge.net", "azure.com", "windows.net", "azuredns-cloud.net"]
 services:
   - key: microsoft.365-mail
     display_name: Microsoft 365 (Exchange Online)
@@ -27,6 +27,8 @@ services:
     service_types: [saas_verification]
     dns_rules:
       - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "ms=", confidence: 0.9}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "mscid="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "d365mktkey="}
   - key: microsoft.365-dns
     display_name: Microsoft 365 managed DNS
     service_types: [dns]
@@ -37,6 +39,7 @@ services:
     service_types: [dns]
     dns_rules:
       - {record_type: NS, match_field: target, matcher_type: regex, pattern: '^ns[1-4]-[0-9]+\.azure-dns\.(com|net|org|info)$'}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "azuredns-cloud.net"}
   - key: microsoft.azure-front-door
     display_name: Azure Front Door / Azure CDN
     service_types: [cdn, waf]

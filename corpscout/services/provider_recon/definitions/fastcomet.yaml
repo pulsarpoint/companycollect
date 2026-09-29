@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: fastcomet
+display_name: "FastComet"
+category: hosting
+website: https://www.fastcomet.com
+aliases: ["FastComet"]
+provider_keys: ["fcomet.com"]
+services:
+  - key: fastcomet.dns
+    display_name: "FastComet DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (FastComet)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "fcomet.com"}

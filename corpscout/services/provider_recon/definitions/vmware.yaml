@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: vmware
+display_name: "VMware"
+category: saas
+website: https://www.vmware.com
+aliases: ["VMware", "VMware CloudHealth"]
+provider_keys: []
+services:
+  - key: vmware.cloudhealth-verification
+    display_name: "VMware CloudHealth domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (VMware CloudHealth)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "cloudhealth="}

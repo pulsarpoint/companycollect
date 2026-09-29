@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: webempresa
+display_name: "Webempresa"
+category: hosting
+website: https://www.webempresa.com
+aliases: ["Webempresa"]
+provider_keys: ["webempresa.eu"]
+services:
+  - key: webempresa.dns
+    display_name: "Webempresa DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Webempresa)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "webempresa.eu"}

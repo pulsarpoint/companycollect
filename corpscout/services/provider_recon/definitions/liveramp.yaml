@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: liveramp
+display_name: "LiveRamp"
+category: saas
+website: https://liveramp.com
+aliases: ["LiveRamp"]
+provider_keys: []
+services:
+  - key: liveramp.verification
+    display_name: "LiveRamp domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (LiveRamp)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "liveramp-site-verification="}

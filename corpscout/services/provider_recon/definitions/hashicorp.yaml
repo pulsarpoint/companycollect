@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hashicorp
+display_name: "HashiCorp"
+category: cloud
+website: https://www.hashicorp.com/cloud
+aliases: ["HashiCorp", "HashiCorp Cloud Platform"]
+provider_keys: []
+services:
+  - key: hashicorp.cloud-platform-verification
+    display_name: "HashiCorp Cloud Platform domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (HashiCorp Cloud Platform)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "hcp-domain-verification="}

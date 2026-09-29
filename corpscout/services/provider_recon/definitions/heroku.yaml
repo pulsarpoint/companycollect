@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: heroku
+display_name: "Heroku"
+category: cloud
+website: https://www.heroku.com/
+aliases: ["Heroku"]
+provider_keys: []
+services:
+  - key: heroku.verification
+    display_name: "Heroku domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Heroku)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "heroku-domain-verification"}

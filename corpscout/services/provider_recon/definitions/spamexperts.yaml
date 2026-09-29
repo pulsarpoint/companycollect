@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=./schema.json
+slug: spamexperts
+display_name: "SpamExperts"
+category: security
+website: https://www.n-able.com/products/mail-assure
+aliases: ["SpamExperts"]
+provider_keys: ["antispamcloud.com", "secure-mailgate.com", "spamexperts.com", "spamexperts.eu", "spamexperts.net"]
+services:
+  - key: spamexperts.mail-filtering
+    display_name: "SpamExperts mail filtering"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (SpamExperts)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "spamexperts.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "spamexperts.eu"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "spamexperts.net"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "secure-mailgate.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "antispamcloud.com"}
+  - key: spamexperts.sending
+    display_name: "SpamExperts outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (SpamExperts)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "spf.antispamcloud.com"}

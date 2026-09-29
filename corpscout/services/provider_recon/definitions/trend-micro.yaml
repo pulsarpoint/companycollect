@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: trend-micro
+display_name: "Trend Micro"
+category: security
+website: https://www.trendmicro.com/en_us/business/products/email-security.html
+aliases: ["Trend Micro", "Trend Micro Email Security"]
+provider_keys: []
+services:
+  - key: trend-micro.email-security-verification
+    display_name: "Trend Micro Email Security domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Trend Micro Email Security)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "tmes="}

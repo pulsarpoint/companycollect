@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=./schema.json
+slug: zoho
+display_name: "Zoho"
+category: email
+website: https://www.zoho.com/
+aliases: ["Zoho", "Zoho Mail"]
+provider_keys: ["transmail.net", "zoho.com", "zohomail.com"]
+services:
+  - key: zoho.sending
+    display_name: "Zoho outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Zoho)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "zoho.com"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "transmail.net"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "zohomail.com"}
+  - key: zoho.mail-verification
+    display_name: "Zoho Mail domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Zoho Mail)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "zoho-verification="}

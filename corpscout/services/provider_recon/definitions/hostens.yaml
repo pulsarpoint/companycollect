@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hostens
+display_name: "Hostens"
+category: hosting
+website: https://www.hostens.com
+aliases: ["Hostens"]
+provider_keys: ["hostens.com"]
+services:
+  - key: hostens.dns
+    display_name: "Hostens DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hostens)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hostens.com"}

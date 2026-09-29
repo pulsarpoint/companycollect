@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: dreamhost
+display_name: "DreamHost"
+category: hosting
+website: https://www.dreamhost.com
+aliases: ["DreamHost"]
+provider_keys: ["dreamhost.com"]
+services:
+  - key: dreamhost.dns
+    display_name: "DreamHost DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (DreamHost)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dreamhost.com"}

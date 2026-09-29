@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: anthropic
+display_name: "Anthropic"
+category: saas
+website: https://www.anthropic.com
+aliases: ["Anthropic"]
+provider_keys: []
+services:
+  - key: anthropic.verification
+    display_name: "Anthropic domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Anthropic)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "anthropic-domain-verification"}

@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=./schema.json
+slug: salesforce
+display_name: "Salesforce"
+category: email
+website: https://www.salesforce.com
+aliases: ["Salesforce", "Salesforce Marketing Cloud Account Engagement"]
+provider_keys: ["salesforce.com"]
+services:
+  - key: salesforce.sending
+    display_name: "Salesforce outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Salesforce)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "salesforce.com"}
+  - key: salesforce.verification
+    display_name: "Salesforce domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Salesforce)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: regex, pattern: '^00D[A-Za-z0-9]{12}='}
+  - key: salesforce.marketing-cloud-account-engagement-verification
+    display_name: "Salesforce Marketing Cloud Account Engagement domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Salesforce Marketing Cloud Account Engagement)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "pardot"}

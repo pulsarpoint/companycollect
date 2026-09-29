@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: natro
+display_name: "Natro"
+category: hosting
+website: https://www.natro.com
+aliases: ["Natro"]
+provider_keys: ["natro.com", "natrohost.com"]
+services:
+  - key: natro.dns
+    display_name: "Natro DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Natro)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "natro.com"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "natrohost.com"}

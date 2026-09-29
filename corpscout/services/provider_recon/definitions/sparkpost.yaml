@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: sparkpost
+display_name: "SparkPost"
+category: email
+website: https://www.sparkpost.com/
+aliases: ["SparkPost"]
+provider_keys: ["sparkpostmail.com"]
+services:
+  - key: sparkpost.sending
+    display_name: "SparkPost outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (SparkPost)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "sparkpostmail.com"}

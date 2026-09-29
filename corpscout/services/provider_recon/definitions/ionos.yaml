@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=./schema.json
+slug: ionos
+display_name: "IONOS"
+category: hosting
+website: https://www.ionos.com
+aliases: ["IONOS"]
+provider_keys: ["ionos.com", "kundenserver.de", "ui-dns.biz", "ui-dns.com", "ui-dns.de", "ui-dns.org"]
+services:
+  - key: ionos.dns
+    display_name: "IONOS DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (IONOS)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ui-dns.biz"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ui-dns.com"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ui-dns.de"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ui-dns.org"}
+  - key: ionos.sending
+    display_name: "IONOS outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (IONOS)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf-eu.ionos.com"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf-us.ionos.com"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.kundenserver.de"}

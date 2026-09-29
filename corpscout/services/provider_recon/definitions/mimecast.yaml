@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: mimecast
+display_name: "Mimecast"
+category: security
+website: https://www.mimecast.com
+aliases: ["Mimecast"]
+provider_keys: ["mimecast-offshore.com", "mimecast.com"]
+services:
+  - key: mimecast.mail-filtering
+    display_name: "Mimecast mail filtering"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Mimecast)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mimecast.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mimecast-offshore.com"}

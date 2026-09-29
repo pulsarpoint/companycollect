@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: elastic-email
+display_name: "Elastic Email"
+category: email
+website: https://elasticemail.com
+aliases: ["Elastic Email"]
+provider_keys: ["elasticemail.com"]
+services:
+  - key: elastic-email.sending
+    display_name: "Elastic Email outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Elastic Email)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.elasticemail.com"}

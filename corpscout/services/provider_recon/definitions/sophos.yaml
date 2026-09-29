@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: sophos
+display_name: "Sophos"
+category: security
+website: https://www.sophos.com
+aliases: ["Sophos", "Sophos Central"]
+provider_keys: []
+services:
+  - key: sophos.central-verification
+    display_name: "Sophos Central domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Sophos Central)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "sophos-domain-verification="}

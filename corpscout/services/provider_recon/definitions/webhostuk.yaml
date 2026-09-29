@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: webhostuk
+display_name: "WebHostUK"
+category: hosting
+website: https://www.webhostuk.co.uk
+aliases: ["WebHostUK"]
+provider_keys: ["dnshostcentral.com"]
+services:
+  - key: webhostuk.dns
+    display_name: "WebHostUK DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (WebHostUK)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dnshostcentral.com"}

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: mailerlite
+display_name: "MailerLite"
+category: email
+website: https://www.mailerlite.com
+aliases: ["MailerLite"]
+provider_keys: ["mlsend.com"]
+services:
+  - key: mailerlite.sending
+    display_name: "MailerLite outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (MailerLite)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.mlsend.com"}
+  - key: mailerlite.verification
+    display_name: "MailerLite domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (MailerLite)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "mailerlite-domain-verification="}

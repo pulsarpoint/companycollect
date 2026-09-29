@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: autodesk
+display_name: "Autodesk"
+category: saas
+website: https://www.autodesk.com
+aliases: ["Autodesk"]
+provider_keys: []
+services:
+  - key: autodesk.verification
+    display_name: "Autodesk domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Autodesk)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "autodesk-domain-verification="}

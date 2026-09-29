@@ -9,3 +9,4 @@ services:
     service_types: [saas_verification]
     dns_rules:
       - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "dropbox-domain-verification=", confidence: 0.9}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "dropbox-domain-verification"}

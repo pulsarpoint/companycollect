@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: segment
+display_name: "Segment"
+category: saas
+website: https://segment.com
+aliases: ["Segment"]
+provider_keys: []
+services:
+  - key: segment.verification
+    display_name: "Segment domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Segment)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "segment-site-verification"}

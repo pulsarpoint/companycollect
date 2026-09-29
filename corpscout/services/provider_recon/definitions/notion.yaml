@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: notion
+display_name: "Notion"
+category: saas
+website: https://notion.so
+aliases: ["Notion"]
+provider_keys: []
+services:
+  - key: notion.verification
+    display_name: "Notion domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Notion)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "notion-domain-verification="}

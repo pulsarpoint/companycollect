@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: azion
+display_name: "Azion"
+category: cdn
+website: https://www.azion.com/
+aliases: ["Azion"]
+provider_keys: ["azioncdn.net"]
+services:
+  - key: azion.cdn
+    display_name: "Azion hosting"
+    service_types: [cdn]
+    note: "Ported from technology_fingerprints (Azion)."
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "azioncdn.net"}

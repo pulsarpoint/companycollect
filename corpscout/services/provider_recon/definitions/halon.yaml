@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: halon
+display_name: "Halon"
+category: email
+website: https://halon.io
+aliases: ["Halon"]
+provider_keys: ["halon.io", "halon.se"]
+services:
+  - key: halon.mail
+    display_name: "Halon mail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (Halon)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "halon.io"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "halon.se"}

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: mailchimp
+display_name: "MailChimp"
+category: email
+website: https://mailchimp.com
+aliases: ["MailChimp"]
+provider_keys: ["mandrillapp.com", "mcsv.net"]
+services:
+  - key: mailchimp.sending
+    display_name: "MailChimp outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (MailChimp)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "servers.mcsv.net"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "spf.mandrillapp.com"}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: klaviyo
+display_name: "Klaviyo"
+category: saas
+website: https://www.klaviyo.com/
+aliases: ["Klaviyo"]
+provider_keys: []
+services:
+  - key: klaviyo.verification
+    display_name: "Klaviyo domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Klaviyo)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "klaviyo-site-verification="}

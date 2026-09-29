@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: mailgun
+display_name: "Mailgun"
+category: email
+website: https://www.mailgun.com/
+aliases: ["Mailgun"]
+provider_keys: ["mailgun.org"]
+services:
+  - key: mailgun.sending
+    display_name: "Mailgun outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Mailgun)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "mailgun.org"}

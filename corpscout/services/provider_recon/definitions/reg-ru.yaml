@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: reg-ru
+display_name: "REG.RU"
+category: hosting
+website: https://www.reg.ru
+aliases: ["REG.RU"]
+provider_keys: ["reg.ru"]
+services:
+  - key: reg-ru.dns
+    display_name: "REG.RU DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (REG.RU)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "reg.ru"}

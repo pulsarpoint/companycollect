@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: linear
+display_name: "Linear"
+category: saas
+website: https://linear.fi/hinnasto
+aliases: ["Linear"]
+provider_keys: []
+services:
+  - key: linear.verification
+    display_name: "Linear domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Linear)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "linear-domain-verification="}

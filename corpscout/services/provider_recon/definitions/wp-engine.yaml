@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: wp-engine
+display_name: "WP Engine"
+category: hosting
+website: https://wpengine.com
+aliases: ["WP Engine"]
+provider_keys: []
+services:
+  - key: wp-engine.verification
+    display_name: "WP Engine domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (WP Engine)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "wpe-verification="}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: jetbrains
+display_name: "JetBrains"
+category: saas
+website: https://www.jetbrains.com
+aliases: ["JetBrains"]
+provider_keys: []
+services:
+  - key: jetbrains.verification
+    display_name: "JetBrains domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (JetBrains)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "jetbrains-domain-verification="}

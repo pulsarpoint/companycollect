@@ -4,7 +4,7 @@ display_name: Oderland
 category: hosting
 country: SE
 aliases: ["Oderland"]
-provider_keys: ["oderland.com"]
+provider_keys: ["oderland.com", "oderland.se"]
 services:
   - key: oderland.dns
     display_name: Oderland DNS
@@ -16,3 +16,4 @@ services:
     service_types: [email]
     dns_rules:
       - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "oderland.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "oderland.se"}

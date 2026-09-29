@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: fortinet
+display_name: "Fortinet"
+category: security
+website: https://www.fortinet.com/products/email-security
+aliases: ["Fortinet", "Fortinet FortiMail Cloud"]
+provider_keys: ["mailanyone.net"]
+services:
+  - key: fortinet.fortimail-cloud
+    display_name: "Fortinet FortiMail Cloud"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Fortinet FortiMail Cloud)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mailanyone.net"}

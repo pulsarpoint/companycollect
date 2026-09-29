@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./schema.json
+slug: brevo
+display_name: "Brevo"
+category: email
+website: https://www.brevo.com
+aliases: ["Brevo", "Sendinblue"]
+provider_keys: ["sendinblue.com"]
+services:
+  - key: brevo.sending
+    display_name: "Brevo outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Brevo)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "sendinblue.com"}
+  - key: brevo.verification
+    display_name: "Brevo domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Brevo)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "brevo-code:"}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "sendinblue-code"}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: sfera-networks
+display_name: "Sfera Networks"
+category: hosting
+website: https://www.sfera.net
+aliases: ["Sfera Networks"]
+provider_keys: ["sfera.net"]
+services:
+  - key: sfera-networks.dns
+    display_name: "Sfera Networks DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Sfera Networks)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "sfera.net"}

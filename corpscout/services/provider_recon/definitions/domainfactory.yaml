@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: domainfactory
+display_name: "DomainFactory"
+category: hosting
+website: https://www.df.eu
+aliases: ["DomainFactory"]
+provider_keys: ["namespace4you.de"]
+services:
+  - key: domainfactory.dns
+    display_name: "DomainFactory DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (DomainFactory)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "namespace4you.de"}

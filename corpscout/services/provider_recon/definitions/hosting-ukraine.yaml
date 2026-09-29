@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hosting-ukraine
+display_name: "Hosting Ukraine"
+category: hosting
+website: https://www.ukraine.com.ua
+aliases: ["Hosting Ukraine"]
+provider_keys: ["ukraine.com.ua"]
+services:
+  - key: hosting-ukraine.dns
+    display_name: "Hosting Ukraine DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hosting Ukraine)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ukraine.com.ua"}

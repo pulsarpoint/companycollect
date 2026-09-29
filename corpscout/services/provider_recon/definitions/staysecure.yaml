@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: staysecure
+display_name: "StaySecure"
+category: security
+website: https://staysecure.se
+aliases: ["StaySecure"]
+provider_keys: ["staysecuregroup.com", "staysecuregroup.net"]
+services:
+  - key: staysecure.mail-filtering
+    display_name: "StaySecure mail filtering"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (StaySecure)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "staysecuregroup.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "staysecuregroup.net"}

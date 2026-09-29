@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: canva
+display_name: "Canva"
+category: saas
+website: https://www.canva.com
+aliases: ["Canva"]
+provider_keys: []
+services:
+  - key: canva.verification
+    display_name: "Canva domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Canva)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "canva-domain-verify="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "canva-site-verification="}

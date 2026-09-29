@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: openai
+display_name: "OpenAI"
+category: saas
+website: https://openai.com
+aliases: ["OpenAI"]
+provider_keys: []
+services:
+  - key: openai.verification
+    display_name: "OpenAI domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (OpenAI)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "openai-domain-verification="}

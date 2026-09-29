@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: figma
+display_name: "Figma"
+category: saas
+website: https://www.figma.com
+aliases: ["Figma"]
+provider_keys: []
+services:
+  - key: figma.verification
+    display_name: "Figma domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Figma)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "figma-domain-verification="}

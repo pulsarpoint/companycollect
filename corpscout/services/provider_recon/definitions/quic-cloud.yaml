@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: quic-cloud
+display_name: "QUIC.cloud"
+category: cdn
+website: https://www.quic.cloud
+aliases: ["QUIC.cloud"]
+provider_keys: ["quicns.com", "quicns.net"]
+services:
+  - key: quic-cloud.dns
+    display_name: "QUIC.cloud DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (QUIC.cloud)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "quicns.com"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "quicns.net"}

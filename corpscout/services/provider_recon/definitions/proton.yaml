@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: proton
+display_name: "Proton"
+category: email
+website: https://proton.me/mail
+aliases: ["Proton", "Proton Mail"]
+provider_keys: ["protonmail.ch"]
+services:
+  - key: proton.mail
+    display_name: "Proton Mail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (Proton Mail)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "protonmail.ch"}
+  - key: proton.mail-verification
+    display_name: "Proton Mail domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Proton Mail)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "protonmail-verification="}

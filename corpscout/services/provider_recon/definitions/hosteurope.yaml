@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hosteurope
+display_name: "HostEurope"
+category: hosting
+website: https://www.hosteurope.de
+aliases: ["HostEurope"]
+provider_keys: ["hosteurope.com"]
+services:
+  - key: hosteurope.dns
+    display_name: "HostEurope DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (HostEurope)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hosteurope.com"}

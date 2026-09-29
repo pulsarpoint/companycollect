@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: xserver
+display_name: "Xserver"
+category: hosting
+website: https://www.xserver.ne.jp
+aliases: ["Xserver"]
+provider_keys: ["xserver.jp"]
+services:
+  - key: xserver.dns
+    display_name: "Xserver DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Xserver)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "xserver.jp"}

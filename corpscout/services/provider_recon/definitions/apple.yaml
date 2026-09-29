@@ -3,9 +3,23 @@ slug: apple
 display_name: Apple
 category: saas
 country: US
+provider_keys: ["icloud.com"]
 services:
   - key: apple.domain-verification
     display_name: Apple domain verification
     service_types: [saas_verification]
     dns_rules:
       - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "apple-domain-verification=", confidence: 0.9}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "apple-domain="}
+  - key: apple.icloud-mail
+    display_name: "Apple iCloud Mail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (Apple iCloud Mail)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mail.icloud.com"}
+  - key: apple.icloud-mail-sending
+    display_name: "Apple iCloud Mail outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Apple iCloud Mail)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "icloud.com"}

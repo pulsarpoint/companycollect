@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: kmk
+display_name: "KMK"
+category: saas
+website: https://www.kmk.net.tr
+aliases: ["KMK"]
+provider_keys: ["kmkhosting.net"]
+services:
+  - key: kmk.dns
+    display_name: "KMK DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (KMK)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "kmkhosting.net"}

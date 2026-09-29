@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: wiz
+display_name: "Wiz"
+category: security
+website: https://www.wiz.io
+aliases: ["Wiz"]
+provider_keys: []
+services:
+  - key: wiz.verification
+    display_name: "Wiz domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Wiz)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "wiz-domain-verification="}
