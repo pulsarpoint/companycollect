@@ -1,4 +1,4 @@
-"""The IP search table (migration 000470) against disposable ClickHouse and PostgreSQL.
+"""The IP search table (migration 000471) against disposable ClickHouse and PostgreSQL.
 
 One row per inventory IP with its current enrichment, the same values ip_enrichment_current
 picks, projections that answer location filters and picker counts, the queue selection
@@ -22,7 +22,7 @@ from tests.test_processing_store import (
 )
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
-MIGRATION = "000470_corpscout_ip_enrichment_search"
+MIGRATION = "000471_corpscout_ip_enrichment_search"
 INVENTORY_DDL = """CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_ip_addresses
 (
     bucket UInt16,
@@ -121,6 +121,8 @@ def refreshed(search_server):
             ('1.1.1.1', '2026-01-01 00:00:00', '2026-01-02 00:00:00'),
             ('5.5.5.5', '2026-01-01 00:00:00', '2026-01-02 00:00:00'),
             ('5.5.5.6', '2026-01-01 00:00:00', '2026-01-02 00:00:00'),
+            ('6.6.6.6', '2026-01-01 00:00:00', '2026-01-02 00:00:00'),
+            ('7.7.7.7', '2026-01-01 00:00:00', '2026-01-02 00:00:00'),
             ('2001:4860::8888', '2026-01-01 00:00:00', '2026-01-02 00:00:00'))"""
     )
     client.execute(
@@ -181,6 +183,33 @@ def refreshed(search_server):
             asn=("found", (3301, "Telia Company AB")),
             rdap=("found", ("5.5.5.0/24", "ripe", "TELIA", [])),
         ),
+        # 6.6.6.6: its only lookup is non-conclusive for every component: statuses
+        # of that attempt, default payload (the view shows the same NULL payload).
+        result_row(
+            "6.6.6.6",
+            "2026-09-03 00:00:00",
+            city=ERROR,
+            asn=("terminal_error", None),
+            rdap=ERROR,
+        ),
+        # 7.7.7.7: the newest result reused an older lookup (checked_at 09-01); the
+        # conclusive lookup checked last (09-05) wins although it completed earlier.
+        result_row(
+            "7.7.7.7",
+            "2026-09-10 00:00:00",
+            city=("found", ("NO", "Norway", ["03"], ["Oslo County"], "Oslo")),
+            asn=("found", (2119, "Telenor Norge AS")),
+            rdap=("found", ("7.7.7.0/24", "ripe", "OLD-NET", ["Old Holder"])),
+            checked_at="2026-09-01 00:00:00",
+        ),
+        result_row(
+            "7.7.7.7",
+            "2026-09-05 00:00:00",
+            city=("found", ("NO", "Norway", ["46"], ["Vestland"], "Bergen")),
+            asn=("found", (2119, "Telenor Norge AS new")),
+            rdap=("found", ("7.7.7.0/24", "ripe", "NEW-NET", ["New Holder"])),
+            checked_at="2026-09-05 00:00:00",
+        ),
         # Enriched but not in the DNS inventory: not a row of the search table.
         result_row(
             "9.9.9.9",
@@ -212,7 +241,15 @@ def refreshed(search_server):
     return client, resource
 
 
-NAMED = ("1.1.1.1", "2001:4860::8888", "5.5.5.5", "5.5.5.6", "8.8.8.8")
+NAMED = (
+    "1.1.1.1",
+    "2001:4860::8888",
+    "5.5.5.5",
+    "5.5.5.6",
+    "6.6.6.6",
+    "7.7.7.7",
+    "8.8.8.8",
+)
 
 
 def test_one_row_per_inventory_ip_with_the_current_state(refreshed):
@@ -245,6 +282,13 @@ def test_one_row_per_inventory_ip_with_the_current_state(refreshed):
          "2026-09-01 00:00:00.000000", "found", "found", "found", 3301,
          "Telia Company AB", "SE", "Sweden", "O", "Vastra Gotaland", "Gothenburg",
          "5.5.5.0/24", "ripe", "TELIA", ""),
+        ("6.6.6.6", 4, "2026-01-01 00:00:00.000", "2026-01-02 00:00:00.000", 1,
+         "2026-09-03 00:00:00.000000", "retryable_error", "terminal_error", "retryable_error",
+         0, "", "", "", "", "", "", "", "", "", ""),
+        ("7.7.7.7", 4, "2026-01-01 00:00:00.000", "2026-01-02 00:00:00.000", 1,
+         "2026-09-10 00:00:00.000000", "found", "found", "found", 2119,
+         "Telenor Norge AS new", "NO", "Norway", "46", "Vestland", "Bergen", "7.7.7.0/24",
+         "ripe", "NEW-NET", "New Holder"),
         ("8.8.8.8", 4, "2026-01-01 00:00:00.000", "2026-03-01 00:00:00.000", 1,
          "2026-09-10 00:00:00.000000", "retryable_error", "found", "terminal_error", 15169,
          "Google LLC", "US", "United States", "CA", "California", "Mountain View",
@@ -273,7 +317,7 @@ def test_values_match_ip_enrichment_current_for_every_enriched_ip(refreshed):
         f"""SELECT count() FROM {search.SEARCH_RELATION} AS s
         INNER JOIN corpscout.ip_enrichment_current AS c ON c.bucket = s.bucket AND c.ip = s.ip"""
     )
-    assert compared == FILLER_ROWS + 4
+    assert compared == FILLER_ROWS + 6
 
 
 def plan(client, sql: str) -> str:
@@ -400,18 +444,27 @@ def test_queue_selection_reads_the_search_table_with_the_backoffice_filters(
     assert observed == "2026-01-02 00:00:00.000000"
 
 
-def test_a_refresh_request_returns_at_once_and_the_view_rebuilds(refreshed, caplog):
+def test_a_fresh_view_is_debounced_and_the_refresh_statement_rebuilds_it(refreshed):
     client, _ = refreshed
     client.execute(
         """INSERT INTO corpscout.commoncrawl_ip_addresses VALUES
         (toUInt16(cityHash64('4.4.4.4') % 256), '4.4.4.4', 4, '2026-01-01', '2026-01-02')"""
     )
-    log = logging.getLogger("test-search-refresh")
+    # The fixture just rebuilt the view: the timing query reads the real server and
+    # the request is skipped without touching the view.
+    rows = client.execute(search.REFRESH_TIMING_SQL)
+    assert search.refresh_skip_reason(rows) == (
+        "the last successful rebuild is under 6 hours old"
+    )
+    assert search.request_search_refresh(client, logging.getLogger("t")) is False
+    assert client.execute(
+        f"SELECT count() FROM {search.SEARCH_RELATION} WHERE ip = '4.4.4.4'"
+    ) == [(0,)]
+    # The statement a non-debounced request sends returns at once and rebuilds.
     started = time.monotonic()
-    assert search.request_search_refresh(client, log) is True
-    assert time.monotonic() - started < 5  # returned without waiting for the rebuild
+    client.execute(search.REFRESH_SQL)
+    assert time.monotonic() - started < 5
     deadline = time.monotonic() + 60
-    # The rebuild swaps in a table that holds the newly observed address.
     while client.execute(
         f"SELECT enriched FROM {search.SEARCH_RELATION} WHERE ip = '4.4.4.4'"
     ) != [(0,)]:
@@ -431,30 +484,88 @@ def test_the_freshness_check_warns_before_the_first_refresh(search_server):
     assert result.severity == dg.AssetCheckSeverity.WARN
 
 
+HOUR = 3600
+
+
 class FakeClient:
-    def __init__(self, error=None):
-        self.statements, self.error = [], error
+    """Answers the timing query with ``timing`` rows and records every statement."""
+
+    def __init__(self, timing=None, error=None, fail_on=None):
+        self.statements, self.timing, self.error = [], timing, error
+        self.fail_on = fail_on
 
     def execute(self, sql, *args, **kwargs):
         self.statements.append(sql)
-        if self.error:
+        if self.error and (self.fail_on is None or sql == self.fail_on):
             raise self.error
+        if sql == search.REFRESH_TIMING_SQL:
+            return self.timing
+        return []
 
 
-def test_refresh_request_issues_one_statement_and_never_waits():
-    client = FakeClient()
+def test_a_stale_view_gets_one_refresh_statement_and_no_wait(caplog):
+    client = FakeClient(timing=[("Scheduled", 7 * HOUR, 12 * HOUR)])
+    with caplog.at_level(logging.INFO):
+        assert search.request_search_refresh(client, logging.getLogger("t")) is True
+    assert client.statements == [
+        search.REFRESH_TIMING_SQL,
+        "SYSTEM REFRESH VIEW corpscout.ip_enrichment_search",
+    ]
+    assert not any("WAIT" in statement for statement in client.statements)
+    assert "Requested a refresh" in caplog.text
+
+
+def test_a_never_built_view_far_from_its_schedule_is_refreshed():
+    client = FakeClient(timing=[("Scheduled", None, 20 * HOUR)])
     assert search.request_search_refresh(client, logging.getLogger("t")) is True
-    assert client.statements == ["SYSTEM REFRESH VIEW corpscout.ip_enrichment_search"]
 
 
-def test_a_failed_refresh_request_is_a_warning(caplog):
-    client = FakeClient(RuntimeError("view is missing"))
+@pytest.mark.parametrize(
+    ("timing", "reason"),
+    [
+        ([("Running", 30 * HOUR, 20 * HOUR)], "a rebuild is already running"),
+        (
+            [("Scheduled", 5 * HOUR, 19 * HOUR)],
+            "the last successful rebuild is under 6 hours old",
+        ),
+        (
+            [("Scheduled", 20 * HOUR, 4 * HOUR)],
+            "the next scheduled rebuild is under 6 hours away",
+        ),
+        ([], "corpscout.ip_enrichment_search is not a refreshable view on this server"),
+    ],
+)
+def test_the_refresh_request_is_debounced(timing, reason, caplog):
+    client = FakeClient(timing=timing)
+    with caplog.at_level(logging.INFO):
+        assert search.request_search_refresh(client, logging.getLogger("t")) is False
+    assert client.statements == [search.REFRESH_TIMING_SQL]
+    assert reason in caplog.text
+
+
+@pytest.mark.parametrize(
+    "fail_on", [None, "SYSTEM REFRESH VIEW corpscout.ip_enrichment_search"]
+)
+def test_a_failed_read_or_request_is_a_warning(fail_on, caplog):
+    client = FakeClient(
+        timing=[("Scheduled", 7 * HOUR, 12 * HOUR)],
+        error=RuntimeError("view is missing"),
+        fail_on=fail_on,
+    )
     with caplog.at_level(logging.WARNING):
         assert search.request_search_refresh(client, logging.getLogger("t")) is False
     assert (
         "Could not request a refresh" in caplog.text
         and "view is missing" in caplog.text
     )
+
+
+def test_the_freshness_schedule_runs_the_check_job_daily_and_starts_stopped():
+    schedule = search.ip_enrichment_search_freshness_schedule
+    assert schedule.cron_schedule == "0 7 * * *"
+    assert schedule.execution_timezone == "UTC"
+    assert schedule.job_name == "ip_enrichment_search_freshness_job"
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
 
 
 def test_freshness_rules():

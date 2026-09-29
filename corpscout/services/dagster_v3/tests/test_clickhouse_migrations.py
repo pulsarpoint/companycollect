@@ -481,7 +481,7 @@ EXPECTED_MIGRATIONS = (
     "000467_corpscout_compact_domain_sources",
     "000468_corpscout_dns_detect",
     "000469_corpscout_domain_review_confidence",
-    "000470_corpscout_ip_enrichment_search",
+    "000471_corpscout_ip_enrichment_search",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
