@@ -105,6 +105,19 @@ export default [
     route("domains", "routes/admin-domains.tsx"),
     route("ip-addresses", "routes/admin-ip-addresses.tsx"),
     route("ip-addresses/statistics", "routes/admin-ip-address-statistics.ts"),
+    // Resource route for the DNS tab's on-demand record history (JSON, no layout).
+    route(
+      "ip-addresses/:address/dns/:rootDomain",
+      "routes/admin-ip-address-dns-history.ts",
+    ),
+    // The static statistics segment above outranks this dynamic one.
+    route("ip-addresses/:address", "routes/admin-ip-address.tsx", [
+      index("routes/admin-ip-address-index.ts"),
+      route("overview", "routes/admin-ip-address-overview.tsx"),
+      route("registration", "routes/admin-ip-address-registration.tsx"),
+      route("dns", "routes/admin-ip-address-dns.tsx"),
+      route("domains", "routes/admin-ip-address-domains.tsx"),
+    ]),
     route("domains/:domain/sites", "routes/admin-domain-sites.ts"),
     route("domains/:domain", "routes/admin-domain.tsx", [
       // The same domain-scoped loaders and views serve both domain entry points.
