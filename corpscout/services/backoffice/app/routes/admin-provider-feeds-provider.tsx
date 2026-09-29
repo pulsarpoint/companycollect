@@ -1,6 +1,7 @@
 import { data, Form, Link, redirect, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/admin-provider-feeds-provider";
 import { FeedSource, ProviderFeedsError, RangeTable, StatusBadge } from "~/components/admin/provider-feeds";
+import { ProviderTabs } from "~/components/admin/provider-tabs";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
@@ -57,6 +58,7 @@ export default function AdminProviderFeedsProvider({ loaderData, actionData }: R
           {doc.slug} · {doc.category}{doc.country ? ` · ${doc.country}` : ""} · collected {doc.collection.collected_at.slice(0, 16).replace("T", " ")} UTC
         </p>
       </header>
+      <ProviderTabs slug={doc.slug} active="definition" />
       {actionData?.error && (
         <Alert variant="destructive">
           <AlertTitle>Restore failed</AlertTitle>

@@ -191,6 +191,7 @@ export default [
     route("provider-feeds", "routes/admin-provider-feeds.tsx"),
     route("provider-feeds/runs/:runId", "routes/admin-provider-feeds-run.tsx"),
     route("provider-feeds/providers/:slug", "routes/admin-provider-feeds-provider.tsx"),
+    route("provider-feeds/providers/:slug/domains", "routes/admin-provider-feeds-provider-domains.tsx"),
     route("crawls", "routes/admin-crawls.tsx"),
     route("crawls/llm-profiles", "routes/admin-crawl-llm-profiles.ts"),
     route("crawls/results", "routes/admin-crawl-result.tsx"),
