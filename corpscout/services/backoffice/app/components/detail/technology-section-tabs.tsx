@@ -11,7 +11,7 @@ export function TechnologySectionTabs({
   crawl = false,
 }: {
   basePath: string;
-  section: TechnologySection | "dns" | "crawl";
+  section: TechnologySection | "dns" | "crawl" | "services";
   search?: string;
   mailSecurity?: boolean;
   dnsRecords?: boolean;
@@ -24,6 +24,11 @@ export function TechnologySectionTabs({
           {dnsRecords ? (
             <TabsTrigger value="dns" render={<NavLink to={`${basePath}/dns${search}`} />} nativeButton={false}>
               DNS records
+            </TabsTrigger>
+          ) : null}
+          {dnsRecords ? (
+            <TabsTrigger value="services" render={<NavLink to={`${basePath}/services${search}`} />} nativeButton={false}>
+              Services
             </TabsTrigger>
           ) : null}
           <TabsTrigger

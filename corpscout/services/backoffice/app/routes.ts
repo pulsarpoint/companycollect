@@ -123,6 +123,7 @@ export default [
       // The same domain-scoped loaders and views serve both domain entry points.
       index("routes/admin-domain-index.ts"),
       route("dns", "routes/admin-domain-dns.tsx"),
+      route("services", "routes/admin-domain-services.tsx"),
       route("crawl", "routes/admin-se-domain-crawl.tsx", {
         id: "workspace-domain-crawl",
       }),
