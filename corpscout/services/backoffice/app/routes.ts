@@ -187,6 +187,7 @@ export default [
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     // provider-recon runs, per-feed churn and warnings (display only), and
     // each provider's missing/removed ranges.
+    route("providers", "routes/admin-providers.tsx"),
     route("provider-feeds", "routes/admin-provider-feeds.tsx"),
     route("provider-feeds/runs/:runId", "routes/admin-provider-feeds-run.tsx"),
     route("provider-feeds/providers/:slug", "routes/admin-provider-feeds-provider.tsx"),
