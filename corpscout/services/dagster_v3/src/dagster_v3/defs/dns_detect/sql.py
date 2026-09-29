@@ -40,14 +40,36 @@ def partition_bucket(partition_key: str) -> int:
     return bucket
 
 
-def candidates_sql(database: str, bucket: int) -> str:
+def watermark_sql(database: str, bucket: int) -> str:
+    """The newest load time in the bucket: the next incremental run's watermark."""
+    return f"""SELECT max(last_loaded_at)
+FROM `{database}`.`{DNS_RECORDS_TABLE}`
+WHERE cityHash64(root_domain) %% {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
+  AND cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}"""
+
+
+def candidates_sql(database: str, bucket: int, *, incremental: bool = False) -> str:
     """The bucket's routable records without a current resolution, as the
     resolver's input fields. Parameters: %(rules_version)s, %(ip_version)s.
 
     The query goes through clickhouse-driver's %-substitution, so a literal
     modulo is written %%. Records with a blank (or whitespace-only: the resolver
     trims) root_domain, name or value are
-    left out: the service would refuse the whole batch for one of them."""
+    left out: the service would refuse the whole batch for one of them.
+
+    incremental=True keeps only domains with records loaded after
+    %(since)s. That set is found from last_loaded_at alone (one column, no
+    FINAL), and the IN on the primary key then prunes the expensive FINAL
+    read to those domains."""
+    changed = ""
+    if incremental:
+        changed = f"""
+      AND root_domain IN (
+        SELECT DISTINCT root_domain FROM `{database}`.`{DNS_RECORDS_TABLE}`
+        WHERE cityHash64(root_domain) %% {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
+          AND cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}
+          AND last_loaded_at > toDateTime64(%(since)s, 3, 'UTC')
+      )"""
     types = ", ".join(f"'{t}'" for t in ROUTABLE_TYPES)
     ip_analyzers = ", ".join(f"'{a}'" for a in IP_ANALYZERS)
     return f"""SELECT
@@ -65,7 +87,7 @@ FROM
     WHERE cityHash64(root_domain) %% {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
       AND cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}
       AND record_type IN ({types})
-      AND trimBoth(root_domain) != '' AND trimBoth(name) != '' AND trimBoth(value) != ''
+      AND trimBoth(root_domain) != '' AND trimBoth(name) != '' AND trimBoth(value) != ''{changed}
       AND (
         name = root_domain
         OR name = concat('www.', root_domain)
