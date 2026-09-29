@@ -38,6 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { ipAddressDetailHref } from "~/lib/ip-address-detail";
 import {
   parseWorkspaceIpFilters,
   workspaceIpAddressesHref,
@@ -400,7 +401,12 @@ export default function WorkspaceIpAddresses({
                   />
                 </TableCell>
                 <TableCell>
-                  <span className="font-mono">{row.ip}</span>
+                  <Link
+                    to={ipAddressDetailHref(row.ip, "overview")}
+                    className="font-mono underline-offset-4 hover:underline"
+                  >
+                    {row.ip}
+                  </Link>
                 </TableCell>
                 <TableCell>
                   <Badge variant="secondary">
