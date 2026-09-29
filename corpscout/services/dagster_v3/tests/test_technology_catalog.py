@@ -10,19 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from dagster_v3.defs.technology_catalog import detection, tables
+from dagster_v3.defs.technology_catalog import tables
 from dagster_v3.defs.technology_catalog.assets import (
-    build_fingerprint_rows,
     build_rows,
     custom_definitions_hash,
     custom_definitions_version,
     custom_source_dir,
-)
-from dagster_v3.defs.technology_catalog.fingerprints import (
-    extract_dns_fingerprints,
-    extract_override_fingerprints,
-    load_fingerprint_overrides,
-    parse_pattern,
 )
 from dagster_v3.defs.technology_catalog.catalog import (
     CatalogLayer,
@@ -39,13 +32,6 @@ MIGRATION = (
     / "clickhouse"
     / "migrations"
     / "000350_corpscout_technology_catalog.up.sql"
-).read_text()
-
-FINGERPRINTS_MIGRATION = (
-    Path(__file__).resolve().parents[3]
-    / "clickhouse"
-    / "migrations"
-    / "000357_corpscout_technology_fingerprints.up.sql"
 ).read_text()
 
 OVERLAY_SHA = "b0e1186877307b246769bdeab61f270b597f6886"
@@ -450,120 +436,6 @@ def test_load_extension_layer_missing_dir_names_the_override():
 # --- Fingerprint extraction (migration 000357) -------------------------------
 
 
-def test_parse_pattern_plain_and_tails():
-    assert parse_pattern("aspmx\\.l\\.google\\.com") == (
-        "aspmx\\.l\\.google\\.com",
-        100,
-        "",
-    )
-    assert parse_pattern("regex\\;confidence:50") == ("regex", 50, "")
-    assert parse_pattern("regex\\;version:\\1\\;confidence:20") == (
-        "regex",
-        20,
-        "\\1",
-    )
-
-
-def test_extract_dns_fingerprints_from_winning_layer(tmp_path: Path):
-    custom = custom_layer_from(
-        tmp_path,
-        {
-            "Shared Tech": {
-                "cats": [1],
-                "description": "curated",
-                "dns": {"MX": ["\\.curated\\.example$"], "TXT": "token=\\;confidence:75"},
-            }
-        },
-    )
-    fingerprints = extract_dns_fingerprints(extension_layer(), overlay_layer(), custom)
-    by_signal = {(f.technology, f.signal_type): f for f in fingerprints}
-    mx = by_signal[("Shared Tech", "dns_mx")]
-    assert mx.pattern == "\\.curated\\.example$"
-    assert mx.confidence == 100
-    assert mx.source == tables.CUSTOM_SOURCE
-    txt = by_signal[("Shared Tech", "dns_txt")]
-    assert txt.pattern == "token="
-    assert txt.confidence == 75
-    # Layers without dns blocks contribute nothing.
-    assert {f.technology for f in fingerprints} == {"Shared Tech"}
-
-
-def test_shipped_custom_dns_fingerprints_extract():
-    bundle_dir = Path(__file__).resolve().parents[4] / "extensions" / "6.12.5_0"
-    extension = load_extension_layer(bundle_dir)
-    custom = load_custom_layer(
-        custom_source_dir(),
-        base_categories=extension.categories,
-        base_groups=extension.groups,
-    )
-    fingerprints = extract_dns_fingerprints(extension, custom)
-    custom_fingerprints = [
-        f for f in fingerprints if f.source == tables.CUSTOM_SOURCE
-    ]
-    assert len(custom_fingerprints) >= 20
-    assert all(f.signal_type.startswith("dns_") for f in custom_fingerprints)
-    # The extension bundle's own dns blocks come along (102 patterns counted).
-    assert len(fingerprints) >= tables.MIN_TECHNOLOGY_FINGERPRINT_ROWS
-
-
-def test_build_fingerprint_rows_match_column_contract(tmp_path: Path):
-    custom = custom_layer_from(
-        tmp_path,
-        {
-            "Shared Tech": {
-                "cats": [1],
-                "description": "curated",
-                "dns": {"MX": ["\\.curated\\.example$"]},
-            }
-        },
-    )
-    fingerprints = extract_dns_fingerprints(custom)
-    rows = build_fingerprint_rows(
-        fingerprints,
-        source_run_id="run-1",
-        updated_at=datetime.now(UTC).replace(tzinfo=None),
-    )
-    columns = tables.TECHNOLOGY_FINGERPRINTS_COLUMNS
-    assert rows and all(len(row) == len(columns) for row in rows)
-    row = dict(zip(columns, rows[0], strict=True))
-    assert row["technology"] == "Shared Tech"
-    assert row["signal_type"] == "dns_mx"
-    assert row["source_run_id"] == "run-1"
-
-
-def test_override_fingerprints_attach_to_known_names_only():
-    overrides = {
-        "Known Tech": {"TXT": ["^token=\\;confidence:75"]},
-        "Renamed Upstream": {"TXT": ["^gone="]},
-    }
-    fingerprints, unknown = extract_override_fingerprints(
-        overrides, {"Known Tech"}, "abc123"
-    )
-    assert unknown == ["Renamed Upstream"]
-    assert len(fingerprints) == 1
-    fp = fingerprints[0]
-    assert fp.technology == "Known Tech"
-    assert fp.signal_type == "dns_txt"
-    assert fp.pattern == "^token="
-    assert fp.confidence == 75
-    assert fp.source == tables.CUSTOM_SOURCE
-    assert fp.source_version == "abc123"
-
-
-def test_shipped_fingerprint_overrides_load_and_compile():
-    overrides, version = load_fingerprint_overrides(custom_source_dir())
-    assert len(overrides) >= 20
-    assert len(version) == 40
-    fingerprints, unknown = extract_override_fingerprints(
-        overrides, set(overrides), version
-    )
-    assert not unknown
-    for fp in fingerprints:
-        assert fp.signal_type.startswith("dns_")
-        assert detection.vectorscan_safe(fp.pattern), fp.pattern
-        assert fp.confidence <= 100
-
-
 def test_definitions_version_tracks_file_content(monkeypatch, tmp_path: Path):
     # The code_version must change when any custom definition file changes, so
     # Dagster flags the catalog asset UNSYNCED after an edit is deployed.
@@ -571,14 +443,13 @@ def test_definitions_version_tracks_file_content(monkeypatch, tmp_path: Path):
     custom_dir.mkdir()
     (custom_dir / "technologies.json").write_text('{"A": {}}')
     (custom_dir / "categories.json").write_text("{}")
-    (custom_dir / "fingerprints.json").write_text("{}")
     monkeypatch.setattr(
         "dagster_v3.defs.technology_catalog.assets.custom_source_dir",
         lambda: custom_dir,
     )
     before = custom_definitions_version()
     assert len(before) == 12
-    (custom_dir / "fingerprints.json").write_text('{"Stripe": {"TXT": ["x"]}}')
+    (custom_dir / "categories.json").write_text('{"901": {"name": "Changed"}}')
     assert custom_definitions_version() != before
     # Stable when nothing changes.
     assert custom_definitions_version() == custom_definitions_version()
@@ -586,24 +457,6 @@ def test_definitions_version_tracks_file_content(monkeypatch, tmp_path: Path):
 
 def test_shipped_definitions_version_is_nonempty():
     assert len(custom_definitions_version()) == 12
-
-
-def test_detection_staleness_check_is_registered():
-    # Partitioned assets get no UNSYNCED badge, so an asset check stands in.
-    from dagster_v3.defs.technology_catalog.assets import defs
-
-    check_names = {
-        key.name
-        for check in defs.asset_checks
-        for key in check.check_keys
-    }
-    assert "detection_reflects_current_catalog" in check_names
-
-
-def test_missing_fingerprint_overrides_file_is_empty(tmp_path: Path):
-    overrides, version = load_fingerprint_overrides(tmp_path)
-    assert overrides == {}
-    assert version == ""
 
 
 PUBLISH_LOG_MIGRATION = (
@@ -645,192 +498,6 @@ def test_definitions_hash_prefix_is_the_code_version():
     assert custom_definitions_version() == full[:12]
 
 
-def test_fingerprints_migration_creates_the_table():
-    assert (
-        f"CREATE TABLE IF NOT EXISTS corpscout.{tables.TECHNOLOGY_FINGERPRINTS_TABLE}"
-        in FINGERPRINTS_MIGRATION
-    )
-
-
-def test_fingerprint_columns_match_migration():
-    for column in tables.TECHNOLOGY_FINGERPRINTS_COLUMNS:
-        assert f"    {column} " in FINGERPRINTS_MIGRATION, (
-            f"missing {column} in migration"
-        )
-    declared = [
-        line
-        for line in FINGERPRINTS_MIGRATION.splitlines()
-        if line.startswith("    ") and not line.lstrip().startswith("--")
-    ]
-    assert len(declared) == len(tables.TECHNOLOGY_FINGERPRINTS_COLUMNS)
-
-
-# --- DNS detection (migration 000358) ----------------------------------------
-
-DETECTION_MIGRATION = (
-    Path(__file__).resolve().parents[3]
-    / "clickhouse"
-    / "migrations"
-    / "000360_corpscout_domain_signal_technologies_partitioned.up.sql"
-).read_text()
-
-
-def test_group_fingerprints_parallel_arrays_and_skips():
-    rows = [
-        ("Google Workspace", "dns_mx", "aspmx\\.l\\.google\\.com", 100, "webappanalyzer"),
-        ("Loopia", "dns_mx", "\\.loopia\\.se$", 100, "custom"),
-        ("Lookaround Tech", "dns_txt", "(?!nope)token", 100, "webappanalyzer"),
-        ("Backref Tech", "dns_txt", "(a)\\1", 100, "webappanalyzer"),
-        ("Token Tech", "dns_txt", "token=", 75, "custom"),
-        ("Future Signal", "spf_include", "ignored", 100, "custom"),
-    ]
-    signals, skipped = detection.group_fingerprints(rows)
-    assert [s.signal_type for s in signals] == ["dns_mx", "dns_txt"]
-    mx = signals[0]
-    assert mx.technologies == ["Google Workspace", "Loopia"]
-    assert mx.patterns == ["aspmx\\.l\\.google\\.com", "\\.loopia\\.se$"]
-    txt = signals[1]
-    assert txt.technologies == ["Token Tech"]
-    assert txt.confidences == [75]
-    assert skipped == [
-        ("Lookaround Tech", "(?!nope)token"),
-        ("Backref Tech", "(a)\\1"),
-    ]
-
-
-def test_vectorscan_safe_accepts_shipped_patterns():
-    bundle_dir = Path(__file__).resolve().parents[4] / "extensions" / "6.12.5_0"
-    extension = load_extension_layer(bundle_dir)
-    custom = load_custom_layer(
-        custom_source_dir(),
-        base_categories=extension.categories,
-        base_groups=extension.groups,
-    )
-    custom_patterns = [
-        f.pattern
-        for f in extract_dns_fingerprints(custom)
-        if f.source == tables.CUSTOM_SOURCE
-    ]
-    assert custom_patterns
-    assert all(detection.vectorscan_safe(p) for p in custom_patterns)
-
-
-def test_candidates_insert_is_bucket_pruned_and_covers_every_signal():
-    sql = detection.candidates_insert_sql("`db`.`cand`", 19)
-    assert sql.count(f"`{'commoncrawl_domain_dns_records'}`") == 1
-    # Verbatim record-store partition-key expression (migration 000161) so
-    # pruning engages, then the detection bucket's own ownership clause.
-    assert "cityHash64(root_domain) % 16 = 3" in sql  # 19 % 16
-    assert "cityHash64(root_domain) % 128 = 19" in sql
-    for record_type in ("MX", "TXT", "NS", "SOA", "CNAME"):
-        assert f"'{record_type}'" in sql
-    assert "substringIndex(value, ' ', -1)" in sql  # MX priority prefix
-    assert "trim(BOTH '\"' FROM value)" in sql  # TXT quotes
-    assert "record_type = 'CNAME' AND name = concat('www.', root_domain)" in sql
-    assert "GROUP BY root_domain, record_name, signal_type, candidate" in sql
-    # The seen-window is inherited from the matched records, making the
-    # detection table a timeline rather than a current-state snapshot.
-    assert "min(first_seen) AS first_seen" in sql
-    assert "max(last_seen) AS last_seen" in sql
-
-
-def test_bucket_count_matches_dns_records_partition_key():
-    migration = (
-        Path(__file__).resolve().parents[3]
-        / "clickhouse"
-        / "migrations"
-        / "000161_corpscout_dns_records_seen_window.up.sql"
-    ).read_text()
-    assert (
-        f"cityHash64(root_domain) % {detection.DNS_RECORDS_HASH_BUCKETS}"
-        in migration
-    )
-
-
-def test_detection_insert_sql_uses_one_vectorscan_pass():
-    sql = detection.detection_insert_sql("`db`.`stage`", "`db`.`cand`", "dns_mx")
-    assert "multiMatchAllIndices(candidate, %(match_patterns)s)" in sql
-    assert "ARRAY JOIN" in sql
-    assert "'dns_mx' AS signal_type" in sql
-    for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
-        assert column in sql
-
-
-def test_signal_filters_sit_in_subqueries_below_the_alias():
-    # The outer SELECT aliases a column literally named signal_type, and
-    # ClickHouse resolves an outer WHERE against that alias — the filter must
-    # therefore live in a subquery underneath it.
-    for sql in (
-        detection.detection_insert_sql("`db`.`stage`", "`db`.`cand`", "dns_mx"),
-        detection.self_hosted_insert_sql("`db`.`stage`", "`db`.`cand`"),
-    ):
-        inner = sql.split("FROM (", 1)[1]
-        assert "WHERE signal_type = 'dns_mx'" in inner
-        alias_pos = sql.index("AS signal_type")
-        assert sql.index("WHERE signal_type = 'dns_mx'") > alias_pos
-        assert "FROM `db`.`cand`" in inner
-
-
-def test_match_patterns_are_case_insensitive_but_stored_clean():
-    signals, _ = detection.group_fingerprints(
-        [("Loopia", "dns_mx", "\\.loopia\\.se$", 100, "custom")]
-    )
-    assert signals[0].patterns == ["\\.loopia\\.se$"]
-    assert signals[0].match_patterns == ["(?i)\\.loopia\\.se$"]
-
-
-def test_self_hosted_sql_scopes_to_own_domain():
-    sql = detection.self_hosted_insert_sql("`db`.`stage`", "`db`.`cand`")
-    assert f"'{detection.SELF_HOSTED_TECHNOLOGY}'" in sql
-    assert "endsWith(candidate, concat('.', root_domain))" in sql
-    assert "candidate = root_domain" in sql
-    assert "'~', 'localhost'" in sql
-
-
-def test_partition_keys_and_bucket_mapping():
-    keys = detection.detection_partition_keys()
-    assert len(keys) == 128
-    assert keys[0] == "hash_000"
-    assert keys[127] == "hash_127"
-    assert detection.partition_bucket("hash_042") == 42
-    with pytest.raises(ValueError):
-        detection.partition_bucket("hash_128")
-
-
-def test_replace_partition_sql_targets_the_bucket():
-    sql = detection.replace_partition_sql("`db`.`t`", "`db`.`stage`", 42)
-    assert sql == "ALTER TABLE `db`.`t` REPLACE PARTITION 42 FROM `db`.`stage`"
-
-
-def test_detection_migration_creates_the_table():
-    assert (
-        "CREATE TABLE IF NOT EXISTS corpscout."
-        f"{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}" in DETECTION_MIGRATION
-    )
-    # The table's partition key must match the asset's bucket expression, or
-    # REPLACE PARTITION would swap the wrong slice.
-    assert (
-        f"PARTITION BY cityHash64(root_domain) % {detection.DETECTION_PARTITION_COUNT}"
-        in DETECTION_MIGRATION
-    )
-
-
-def test_detection_columns_match_migration():
-    for column in tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS:
-        assert f"    {column} " in DETECTION_MIGRATION, (
-            f"missing {column} in migration"
-        )
-    declared = [
-        line
-        for line in DETECTION_MIGRATION.splitlines()
-        if line.startswith("    ") and not line.lstrip().startswith("--")
-    ]
-    assert len(declared) == len(tables.DOMAIN_SIGNAL_TECHNOLOGIES_COLUMNS)
-
-
-# --- ClickHouse contract: migration 000350 owns the schema -------------------
-
-
 def test_migration_creates_the_table():
     assert (
         f"CREATE TABLE IF NOT EXISTS corpscout.{tables.TECHNOLOGY_CATALOG_TABLE}"
@@ -863,3 +530,28 @@ def test_row_floor_guards_the_extension_baseline():
     # 7,278 technologies ship in the extension bundle alone; the floor must
     # stay high enough to catch a half-broken merge.
     assert tables.MIN_TECHNOLOGY_CATALOG_ROWS == 5_000
+
+
+def test_retired_dns_detection_is_gone():
+    """domain_signal_technologies and technology_fingerprints were retired
+    2026-09-29 (dns-detect replaces them): no asset, job, check or rollup
+    input may name them, and the catalog must not require the dropped table."""
+    import inspect
+
+    import dagster as dg
+
+    from dagster_v3.defs.technology_catalog import assets
+
+    keys = {key.to_user_string() for a in assets.defs.assets for key in a.keys}
+    assert "domain_signal_technologies_clickhouse" not in keys
+    assert {j.name for j in assets.defs.jobs} == {"technology_catalog_job"}
+    assert not list(assets.defs.asset_checks or [])
+    for rollup in (assets.technology_adoption_clickhouse, assets.technology_companies_clickhouse,
+                   assets.technology_top_domains_clickhouse):
+        deps = {k.to_user_string() for ks in rollup.asset_deps.values() for k in ks}
+        assert "domain_signal_technologies_clickhouse" not in deps
+    source = inspect.getsource(assets)
+    assert "domain_signal_technologies" not in source
+    assert "technology_fingerprints" not in tables.TECHNOLOGY_CATALOG_TABLES
+    assert not (custom_source_dir() / "fingerprints.json").exists()
+    assert dg  # imported for AssetKey string helpers

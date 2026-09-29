@@ -491,6 +491,11 @@ NOOP_MIGRATIONS = {"000276_noop"}
 # history. Nothing is left for these migrations to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
 EMPTIED_MIGRATIONS = {
+    # DNS signal retirement (2026-09-29): domain_signal_technologies and technology_fingerprints
+    # were dropped by hand after dns-detect (000468) replaced the old fingerprint pipeline.
+    "000357_corpscout_technology_fingerprints",
+    "000358_corpscout_domain_signal_technologies",
+    "000360_corpscout_domain_signal_technologies_partitioned",
     "000409_corpscout_company_brave_search_results",
     "000410_corpscout_company_brave_info",
     "000052_corpscout_lei_wikidata_companies_view",

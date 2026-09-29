@@ -3,8 +3,8 @@
 `technology_aliases.json` contains file-curated accepted technology synonyms.
 The existing `technology_catalog_clickhouse` asset loads it, validates every target
 against the merged catalog, and publishes `corpscout.technology_aliases` using migration
-`000388_corpscout_technology_aliases`. Aliases are published after the catalog and DNS
-fingerprints; the publish log is appended only after all three tables finish.
+`000388_corpscout_technology_aliases`. Aliases are published after the catalog; the
+publish log is appended only after both tables finish.
 Migration `000389_corpscout_technology_proposals` adds crawler proposals and the
 administrator review ledger. The asset merges approved new entries as an `admin_review`
 catalog layer and combines explicitly approved aliases with this file. Those reviews
