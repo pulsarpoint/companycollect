@@ -91,3 +91,18 @@ def test_other_buckets_select_nothing() -> None:
     other = (bucket() + 1) % sql.PARTITION_COUNT
     query = driver_render(sql.candidates_sql("corpscout", other), {"rules_version": "R", "ip_version": "I"})
     assert run(setup() + query + " FORMAT JSONCompactEachRow;") == []
+
+
+def test_incremental_candidates_only_cover_domains_loaded_after_the_watermark() -> None:
+    later = (
+        "INSERT INTO corpscout.commoncrawl_domain_dns_records (record_id, root_domain, name, record_type, value, first_seen, last_seen, last_loaded_at) VALUES "
+        f"(unhex('{hexid(20)}'), 'late.se', 'late.se', 'NS', 'ns1.loopia.se.', '2026-09-25 00:00:00', '2026-09-25 00:00:00', '2026-09-26 12:00:00');\n"
+    )
+    b = run(f"SELECT cityHash64('late.se') % 128, cityHash64('{DOMAIN}') % 128 FORMAT JSONCompactEachRow;")[0]
+    params = {"rules_version": "R", "ip_version": "I", "since": "2026-09-26 00:00:00.000"}
+    query = driver_render(sql.candidates_sql("corpscout", b[0], incremental=True), params)
+    rows = run(setup() + later + query + " FORMAT JSONCompactEachRow;")
+    # example.se's records carry no load time after the watermark; late.se's does.
+    assert [r[1] for r in rows] == ["late.se"]
+    watermark = driver_render(sql.watermark_sql("corpscout", b[0]), {})
+    assert run(setup() + later + watermark + " FORMAT JSONCompactEachRow;") == [["2026-09-26 12:00:00.000"]]
