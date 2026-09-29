@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: palo-alto-networks
+display_name: "Palo Alto Networks"
+category: security
+website: https://www.paloaltonetworks.com
+aliases: ["Palo Alto Networks"]
+provider_keys: []
+services:
+  - key: palo-alto-networks.verification
+    display_name: "Palo Alto Networks domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Palo Alto Networks)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "paloaltonetworks-site-verification="}

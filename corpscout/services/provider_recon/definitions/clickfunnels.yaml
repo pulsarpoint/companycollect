@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: clickfunnels
+display_name: "ClickFunnels"
+category: saas
+website: https://www.clickfunnels.com
+aliases: ["ClickFunnels"]
+provider_keys: []
+services:
+  - key: clickfunnels.verification
+    display_name: "ClickFunnels domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (ClickFunnels)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "clickfunnels-domain-verification="}

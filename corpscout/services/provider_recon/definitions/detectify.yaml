@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: detectify
+display_name: "Detectify"
+category: security
+website: https://detectify.com/
+aliases: ["Detectify"]
+provider_keys: []
+services:
+  - key: detectify.verification
+    display_name: "Detectify domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Detectify)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "detectify-verification"}

@@ -4,7 +4,7 @@ display_name: Simply.com
 category: hosting
 country: DK
 aliases: ["Simply.com"]
-provider_keys: ["simply.com"]
+provider_keys: ["simply.com", "unoeuro.com"]
 services:
   - key: simply.dns
     display_name: Simply.com DNS
@@ -16,3 +16,4 @@ services:
     service_types: [email]
     dns_rules:
       - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "simply.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "unoeuro.com"}

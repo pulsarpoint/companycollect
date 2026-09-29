@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: ans
+display_name: "ANS (UKFast)"
+category: hosting
+website: https://www.ans.co.uk
+aliases: ["ANS", "ANS (UKFast)", "UKFast"]
+provider_keys: ["ukfast.net"]
+services:
+  - key: ans.dns
+    display_name: "ANS DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (ANS)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ukfast.net"}

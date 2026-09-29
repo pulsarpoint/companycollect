@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: mixpanel
+display_name: "Mixpanel"
+category: saas
+website: https://mixpanel.com
+aliases: ["Mixpanel"]
+provider_keys: []
+services:
+  - key: mixpanel.verification
+    display_name: "Mixpanel domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Mixpanel)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "mixpanel-domain-verify"}

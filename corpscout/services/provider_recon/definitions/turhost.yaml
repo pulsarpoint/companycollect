@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: turhost
+display_name: "Turhost"
+category: hosting
+website: https://www.turhost.com
+aliases: ["Turhost"]
+provider_keys: ["turhost.com"]
+services:
+  - key: turhost.dns
+    display_name: "Turhost DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Turhost)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "turhost.com"}

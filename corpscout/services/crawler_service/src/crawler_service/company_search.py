@@ -8,6 +8,7 @@ from uuid import uuid4
 import httpx
 
 from crawler_service.debug_trace import trace_event
+from crawler_service.logging_errors import error_details
 
 COMPANY_TABLE = "corpscout.se_companies_serving"
 COMPANY_COLUMNS = """company_id, legal_name, status, primary_street_address,
@@ -118,10 +119,13 @@ async def search_companies(
             raise ValueError("Invalid company registry response")
         search.update(status="completed", rows=rows, row_count=len(rows))
         return rows
-    except (httpx.HTTPError, ValueError) as error:
-        search.update(status="failed", error=type(error).__name__)
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+        detail = error_details(
+            error, endpoint=str(http.base_url), operation=f"company_search:{kind}"
+        )
+        search.update(status="failed", error=detail)
         raise RuntimeError(
-            f"Company database search failed ({type(error).__name__})"
+            f"Company database search failed ({detail})"
         ) from error
     finally:
         search["duration_ms"] = round((time.monotonic() - started) * 1000, 1)

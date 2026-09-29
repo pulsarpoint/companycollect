@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: contabo
+display_name: "Contabo"
+category: hosting
+website: https://contabo.com
+aliases: ["Contabo"]
+provider_keys: ["contabo.net"]
+services:
+  - key: contabo.dns
+    display_name: "Contabo DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Contabo)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "contabo.net"}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: elevenlabs
+display_name: "ElevenLabs"
+category: saas
+website: https://elevenlabs.io
+aliases: ["ElevenLabs"]
+provider_keys: []
+services:
+  - key: elevenlabs.verification
+    display_name: "ElevenLabs domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (ElevenLabs)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "elevenlabs="}

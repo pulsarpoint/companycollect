@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: windsurf
+display_name: "Windsurf"
+category: saas
+website: https://windsurf.com
+aliases: ["Windsurf"]
+provider_keys: []
+services:
+  - key: windsurf.verification
+    display_name: "Windsurf domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Windsurf)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "windsurf-verification="}

@@ -79,6 +79,7 @@
       no_log: true
 
     - name: Validate optional S3 delivery settings
+      tags: [credentials]
       ansible.builtin.assert:
         that:
           - not crawler_service_human_enabled or crawler_service_s3_bucket | length > 0
@@ -99,6 +100,7 @@
       no_log: true
 
     - name: Require credentials for the REST API and default model
+      tags: [credentials]
       ansible.builtin.assert:
         that:
           - crawler_service_browser_api_url | length > 0
@@ -111,6 +113,7 @@
       no_log: true
 
     - name: Require central identity registration connections
+      tags: [credentials]
       ansible.builtin.assert:
         that:
           - crawler_service_clickhouse_native_url is match('^clickhouses?://')
@@ -120,7 +123,22 @@
         fail_msg: Configure native ClickHouse parent registration and the same PROCESSING_PG_URL used by Dagster inventory publishers.
       no_log: true
 
+    - name: Require the dedicated native result writer
+      tags: [credentials]
+      ansible.builtin.assert:
+        that:
+          - crawler_service_clickhouse_results_native_url is match('^clickhouses?://')
+          - (crawler_service_clickhouse_results_native_url | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: Configure CLICKHOUSE_RESULTS_NATIVE_URL with dedicated result-writer credentials.
+      no_log: true
+
+    - name: Validate SQLite history retention
+      ansible.builtin.assert:
+        that: crawler_service_sqlite_retention_days | int >= 1
+        fail_msg: SQLite history retention must be at least one day.
+
     - name: Validate the shared Backoffice LLM encryption key
+      tags: [credentials]
       ansible.builtin.assert:
         that:
           - crawler_service_llm_encryption_key is match('^[A-Fa-f0-9]{64}$')
@@ -318,6 +336,7 @@
           no_log: true
 
         - name: Install the service credentials
+          tags: [credentials]
           ansible.builtin.template:
             src: crawler-service.env.j2
             dest: "{{ crawler_service_env_file }}"

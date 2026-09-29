@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: smartsheet
+display_name: "Smartsheet"
+category: saas
+website: https://www.smartsheet.com
+aliases: ["Smartsheet"]
+provider_keys: []
+services:
+  - key: smartsheet.verification
+    display_name: "Smartsheet domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Smartsheet)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "smartsheet-site-validation="}

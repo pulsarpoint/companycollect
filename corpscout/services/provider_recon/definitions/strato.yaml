@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: strato
+display_name: "Strato"
+category: hosting
+website: https://www.strato.com
+aliases: ["Strato"]
+provider_keys: ["rzone.de", "strato-rz.de"]
+services:
+  - key: strato.dns
+    display_name: "Strato DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Strato)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "strato-rz.de"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "rzone.de"}

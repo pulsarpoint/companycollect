@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: yahoo
+display_name: "Yahoo"
+category: saas
+website: https://www.yahoo.com
+aliases: ["Yahoo"]
+provider_keys: []
+services:
+  - key: yahoo.verification
+    display_name: "Yahoo domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Yahoo)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "yahoo-verification-key="}

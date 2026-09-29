@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: loom
+display_name: "Loom"
+category: saas
+website: https://www.loom.com
+aliases: ["Loom"]
+provider_keys: []
+services:
+  - key: loom.verification
+    display_name: "Loom domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Loom)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "loom-site-verification="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "loom-verification"}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: barracuda
+display_name: "Barracuda Networks"
+category: security
+website: https://www.barracuda.com/products/email-protection
+aliases: ["Barracuda Email Security", "Barracuda Networks"]
+provider_keys: ["barracudanetworks.com"]
+services:
+  - key: barracuda.email-security
+    display_name: "Barracuda Email Security"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Barracuda Email Security)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "ess.barracudanetworks.com"}

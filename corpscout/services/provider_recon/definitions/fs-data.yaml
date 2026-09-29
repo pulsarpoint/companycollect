@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: fs-data
+display_name: "FS Data"
+category: hosting
+website: https://www.fsdata.se
+aliases: ["FS Data"]
+provider_keys: ["fsdata.se"]
+services:
+  - key: fs-data.mail
+    display_name: "FS Data mail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (FS Data)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "fsdata.se"}

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: miro
+display_name: "Miro"
+category: saas
+website: https://miro.com
+aliases: ["Miro"]
+provider_keys: []
+services:
+  - key: miro.verification
+    display_name: "Miro domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Miro)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "miro-verification="}

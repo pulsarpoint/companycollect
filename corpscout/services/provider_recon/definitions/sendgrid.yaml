@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: sendgrid
+display_name: "SendGrid"
+category: email
+website: https://sendgrid.com
+aliases: ["SendGrid", "Sendgrid"]
+provider_keys: ["sendgrid.net"]
+services:
+  - key: sendgrid.mail
+    display_name: "SendGrid mail"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (SendGrid)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "sendgrid.net"}
+  - key: sendgrid.sending
+    display_name: "SendGrid outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (SendGrid)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "sendgrid.net"}

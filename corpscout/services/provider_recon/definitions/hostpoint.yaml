@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hostpoint
+display_name: "Hostpoint"
+category: hosting
+website: https://www.hostpoint.ch
+aliases: ["Hostpoint"]
+provider_keys: ["hostpoint.ch"]
+services:
+  - key: hostpoint.dns
+    display_name: "Hostpoint DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hostpoint)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hostpoint.ch"}

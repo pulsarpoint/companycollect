@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: tangled-network
+display_name: "Tangled Network"
+category: hosting
+website: https://tanglednetwork.com
+aliases: ["Tangled Network"]
+provider_keys: ["tanglednetwork.com"]
+services:
+  - key: tangled-network.dns
+    display_name: "Tangled Network DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Tangled Network)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "tanglednetwork.com"}

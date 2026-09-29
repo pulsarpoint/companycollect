@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: yalinhost
+display_name: "YalinHost"
+category: hosting
+website: https://yalinhost.com
+aliases: ["YalinHost"]
+provider_keys: ["yalinhost.com"]
+services:
+  - key: yalinhost.dns
+    display_name: "YalinHost DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (YalinHost)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "yalinhost.com"}

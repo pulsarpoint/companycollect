@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=./schema.json
+slug: cisco
+display_name: "Cisco"
+category: security
+website: https://www.cisco.com
+aliases: ["Cisco", "Cisco Duo", "Cisco Secure Email", "Cisco Webex"]
+provider_keys: ["iphmx.com"]
+services:
+  - key: cisco.verification
+    display_name: "Cisco domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Cisco)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "cisco-ci-domain-verification="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "ciscocidomainverification="}
+  - key: cisco.duo-verification
+    display_name: "Cisco Duo domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Cisco Duo)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "duo_sso_verification="}
+  - key: cisco.secure-email
+    display_name: "Cisco Secure Email"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Cisco Secure Email)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "iphmx.com"}

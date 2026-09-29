@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hostiq
+display_name: "Hostiq"
+category: hosting
+website: https://hostiq.ua
+aliases: ["Hostiq"]
+provider_keys: ["hostiq.ua"]
+services:
+  - key: hostiq.dns
+    display_name: "Hostiq DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hostiq)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hostiq.ua"}

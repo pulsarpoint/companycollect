@@ -5,15 +5,17 @@ import fcntl
 import hashlib
 import json
 import logging
+import time
 import traceback
 from contextlib import AsyncExitStack
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TextIO
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+import psycopg2
 from corpscout_identity.urls import website_reference
 from pydantic import Field, field_serializer, field_validator, model_validator
 
@@ -25,7 +27,7 @@ from crawler_service.company_lookup import (
     basic_info_result,
     find_company,
 )
-from crawler_service.company_lookup_results import publish as publish_lookup_results
+from crawler_service.company_lookup_results import deliver as publish_lookup_results
 from crawler_service.company_lookup_store import LookupStore
 from crawler_service.crawl import crawl_company
 from crawler_service.crawl_history import CrawlHistory
@@ -42,8 +44,10 @@ from crawler_service.identity_registration import register_results
 from crawler_service.jev import JevClient
 from crawler_service.llm import ModelClient
 from crawler_service.llm_profile import EncryptedLLMProfile, LLMProfileError
+from crawler_service.logging_errors import error_details
 from crawler_service.models import ResearchConfig, StrictModel
 from crawler_service.profiles import site_information
+from crawler_service.sqlite_maintenance import prune_sqlite
 from crawler_service.storage import utc_now, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -283,6 +287,10 @@ class CrawlService:
         self.lookup_store: LookupStore | None = None
         self.lookup_dispatch_task: asyncio.Task | None = None
         self.lookup_delivery_task: asyncio.Task | None = None
+        self.maintenance_task: asyncio.Task | None = None
+        self.sqlite_retention_days = int(environment.get("CRAWL_SQLITE_RETENTION_DAYS", "1"))
+        if self.sqlite_retention_days < 1:
+            raise ValueError("CRAWL_SQLITE_RETENTION_DAYS must be at least 1")
         self.lookup_concurrency = int(environment.get("CRAWL_LOOKUP_CONCURRENCY", "4"))
         self.lookup_timeout = int(environment.get("CRAWL_LOOKUP_TIMEOUT_SECONDS", "900"))
         if self.lookup_timeout < 1:
@@ -429,6 +437,7 @@ class CrawlService:
             self.workers += [asyncio.create_task(self.work(self.lookup_queue)) for _ in range(self.lookup_concurrency)]
             self.lookup_dispatch_task = asyncio.create_task(self.dispatch_lookup_batches())
             self.lookup_delivery_task = asyncio.create_task(self.deliver_lookup_results())
+            self.maintenance_task = asyncio.create_task(self.maintain_sqlite())
             if self.results is not None:
                 self.delivery_task = asyncio.create_task(self.deliver_results())
             self.accepting = True
@@ -437,7 +446,42 @@ class CrawlService:
             raise
 
     def healthy(self) -> bool:
-        return self.accepting and all(not worker.done() for worker in self.workers) and all(task is None or not task.done() for task in (self.lookup_dispatch_task, self.lookup_delivery_task))
+        return self.accepting and all(not worker.done() for worker in self.workers) and all(task is None or not task.done() for task in (self.lookup_dispatch_task, self.lookup_delivery_task, self.maintenance_task))
+
+    async def maintain_sqlite(self) -> None:
+        last_disk_warning = None
+        while True:
+            before = (datetime.now(UTC) - timedelta(days=self.sqlite_retention_days)).isoformat(timespec="microseconds")
+            try:
+                cleanup = asyncio.create_task(asyncio.to_thread(prune_sqlite, self.root, before))
+                try:
+                    counts = await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # Finish the bounded transaction before releasing the service lock.
+                    await asyncio.gather(cleanup, return_exceptions=True)
+                    raise
+                if counts["publications"] or counts["events"]:
+                    LOGGER.info(
+                        "SQLite cleanup completed: retention_days=%s publications_compacted=%s events_deleted=%s reusable_bytes=%s free_bytes=%s",
+                        self.sqlite_retention_days, counts["publications"], counts["events"],
+                        counts["reusable_bytes"], counts["free_bytes"],
+                    )
+                now = time.monotonic()
+                if counts["free_bytes"] < 1024**3:
+                    if last_disk_warning is None or now - last_disk_warning >= 3600:
+                        LOGGER.warning(
+                            "Crawler storage low: free_bytes=%s sqlite_reusable_bytes=%s; pending results retained; inspect artifact and release retention",
+                            counts["free_bytes"], counts["reusable_bytes"],
+                        )
+                        last_disk_warning = now
+                else:
+                    last_disk_warning = None
+            except Exception as failure:
+                LOGGER.warning(
+                    "SQLite cleanup failed; retry in 60s: %s",
+                    error_details(failure, endpoint="sqlite://local", operation="prune_history"),
+                )
+            await asyncio.sleep(60)
 
     def persist(self, job: CrawlJob) -> None:
         job.updated_at = utc_now()
@@ -689,7 +733,7 @@ class CrawlService:
     def submit_lookup_batch(self, request: CompanyLookupBatchRequest) -> dict:
         if not self.accepting or self.lookup_store is None:
             raise ServiceUnavailable("Crawler is not accepting batches")
-        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_URL"):
+        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_NATIVE_URL"):
             raise ServiceUnavailable("Configure lookup registry and result ClickHouse connections first")
         request.llm.decrypt_api_key(self.environment)
         if request.decision_llm is not None:
@@ -704,7 +748,7 @@ class CrawlService:
     def submit_crawl_batch(self, request: CrawlBatchRequest) -> dict:
         if not self.accepting or self.lookup_store is None:
             raise ServiceUnavailable("Crawler is not accepting batches")
-        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_URL"):
+        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_NATIVE_URL"):
             raise ServiceUnavailable("Configure registry and result ClickHouse connections first")
         items = []
         for entry in request.entries:
@@ -798,23 +842,54 @@ class CrawlService:
 
     async def deliver_lookup_results(self) -> None:
         assert self.lookup_store is not None
+        failures = {}
+        missing_config_warning = None
         while True:
-            if self.environment.get("CLICKHOUSE_RESULTS_URL"):
-                async with httpx.AsyncClient(base_url=self.environment["CLICKHOUSE_RESULTS_URL"].rstrip("/") + "/",
-                    auth=httpx.BasicAuth(self.environment.get("CLICKHOUSE_RESULTS_USER", "default"), self.environment.get("CLICKHOUSE_RESULTS_PASSWORD", "")), timeout=60) as http:
-                    for batch_id, rows in self.lookup_store.ready():
-                        error = None
-                        try:
-                            results = [json.loads(row["payload"]) for row in rows]
-                            await asyncio.to_thread(register_results, self.environment, results)
-                            await publish_lookup_results(http, results)
-                        except Exception as failure:
-                            # Provider URLs/credentials must never enter receipts or logs.
-                            error = type(failure).__name__ + (f" (HTTP {failure.response.status_code})" if isinstance(failure, httpx.HTTPStatusError) else "")
-                            LOGGER.warning("Lookup publication pending: batch=%s attempts=%s error=%s", batch_id, len(rows), error)
-                        self.lookup_store.delivered(batch_id, rows, error)
-                        if error is None:
-                            LOGGER.info("Lookup findings published: batch=%s attempts=%s", batch_id, len(rows))
+            if self.environment.get("CLICKHOUSE_RESULTS_NATIVE_URL"):
+                for batch_id, rows in self.lookup_store.ready():
+                    error = None
+                    started = time.monotonic()
+                    operation = "register_parents"
+                    endpoint = self.environment.get("CLICKHOUSE_NATIVE_URL", "")
+                    try:
+                        results = [json.loads(row["payload"]) for row in rows]
+                        await asyncio.to_thread(register_results, self.environment, results)
+                        operation = "publish_results"
+                        endpoint = self.environment["CLICKHOUSE_RESULTS_NATIVE_URL"]
+                        await asyncio.to_thread(publish_lookup_results, self.environment, results)
+                    except Exception as failure:
+                        cause = failure
+                        while cause.__cause__ is not None:
+                            cause = cause.__cause__
+                        if operation == "register_parents" and isinstance(cause, psycopg2.Error):
+                            endpoint = self.environment.get("PROCESSING_PG_URL", "")
+                        error = error_details(failure, operation=operation, endpoint=endpoint)
+                        previous_error, last_warning, retries = failures.get(batch_id, (None, 0, 0))
+                        now = time.monotonic()
+                        retries += 1
+                        if error != previous_error or now - last_warning >= 60:
+                            LOGGER.warning(
+                                "Lookup publication pending: batch=%s results=%s retry=%s next_retry_seconds=5 error=%s",
+                                batch_id, len(rows), retries, error,
+                            )
+                            last_warning = now
+                        failures[batch_id] = (error, last_warning, retries)
+                    self.lookup_store.delivered(batch_id, rows, error)
+                    if error is None:
+                        retries = failures.pop(batch_id, (None, 0, 0))[2]
+                        LOGGER.info(
+                            "Lookup findings published: batch=%s results=%s previous_failures=%s duration_ms=%.0f",
+                            batch_id, len(rows), retries, (time.monotonic() - started) * 1000,
+                        )
+            elif self.lookup_store.db.execute(
+                "SELECT 1 FROM publications WHERE published_at IS NULL LIMIT 1"
+            ).fetchone() is not None:
+                now = time.monotonic()
+                if missing_config_warning is None or now - missing_config_warning >= 60:
+                    LOGGER.error(
+                        "Lookup publication disabled: configure CLICKHOUSE_RESULTS_NATIVE_URL; pending results retained"
+                    )
+                    missing_config_warning = now
             await asyncio.sleep(5)
 
     async def deliver_results(self) -> None:
@@ -1165,7 +1240,7 @@ class CrawlService:
                 LOGGER.error("Crawl worker stopped (%s)", type(outcome).__name__)
         self.workers.clear()
         await self.search.close()
-        for task in (self.lookup_dispatch_task, self.lookup_delivery_task):
+        for task in (self.lookup_dispatch_task, self.lookup_delivery_task, self.maintenance_task):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

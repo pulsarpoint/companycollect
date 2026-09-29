@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: proofpoint
+display_name: "Proofpoint"
+category: security
+website: https://www.proofpoint.com/us/products/email-protection
+aliases: ["Proofpoint", "Proofpoint Email Protection"]
+provider_keys: ["ppe-hosted.com", "pphosted.com"]
+services:
+  - key: proofpoint.email-protection
+    display_name: "Proofpoint Email Protection"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Proofpoint Email Protection)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "ppe-hosted.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "pphosted.com"}

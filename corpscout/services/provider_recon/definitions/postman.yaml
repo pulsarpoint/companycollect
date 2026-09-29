@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: postman
+display_name: "Postman"
+category: saas
+website: https://www.postman.com
+aliases: ["Postman"]
+provider_keys: []
+services:
+  - key: postman.verification
+    display_name: "Postman domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Postman)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "postman-domain-verification="}

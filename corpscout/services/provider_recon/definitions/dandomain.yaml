@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: dandomain
+display_name: "DanDomain"
+category: hosting
+website: https://dandomain.dk/e-mail
+aliases: ["DanDomain", "DanDomain email", "DanDomain hosting"]
+provider_keys: ["dandomain.dk"]
+services:
+  - key: dandomain.email
+    display_name: "DanDomain email"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (DanDomain email)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "dandomain.dk"}
+  - key: dandomain.hosting-dns
+    display_name: "DanDomain hosting DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (DanDomain hosting)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dandomain.dk"}

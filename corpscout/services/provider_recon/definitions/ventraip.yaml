@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: ventraip
+display_name: "VentraIP"
+category: hosting
+website: https://ventraip.com.au
+aliases: ["VentraIP"]
+provider_keys: ["hostingplatform.net.au", "nameserver.net.au"]
+services:
+  - key: ventraip.dns
+    display_name: "VentraIP DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (VentraIP)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hostingplatform.net.au"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "nameserver.net.au"}

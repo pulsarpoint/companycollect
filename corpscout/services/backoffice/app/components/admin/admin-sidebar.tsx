@@ -242,6 +242,16 @@ export function AdminSidebar() {
             </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
+                isActive={pathname === "/admin/providers"}
+                tooltip="Domains using each provider"
+                render={<Link to="/admin/providers" />}
+              >
+                <GlobeIcon />
+                <span>Providers</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
                 isActive={pathname === "/admin/provider-feeds" || pathname.startsWith("/admin/provider-feeds/")}
                 tooltip="Provider feed updates and warnings"
                 render={<Link to="/admin/provider-feeds" />}

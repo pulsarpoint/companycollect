@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: ibm
+display_name: "IBM"
+category: saas
+website: https://www.ibm.com
+aliases: ["IBM"]
+provider_keys: []
+services:
+  - key: ibm.verification
+    display_name: "IBM domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (IBM)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "ibmid="}

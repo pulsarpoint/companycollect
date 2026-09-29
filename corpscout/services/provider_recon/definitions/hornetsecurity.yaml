@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: hornetsecurity
+display_name: "Hornetsecurity"
+category: security
+website: https://www.hornetsecurity.com
+aliases: ["Hornetsecurity"]
+provider_keys: ["antispameurope.com", "hornetsecurity.com"]
+services:
+  - key: hornetsecurity.mail-filtering
+    display_name: "Hornetsecurity"
+    service_types: [email_security]
+    note: "Ported from technology_fingerprints (Hornetsecurity)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "antispameurope.com"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "hornetsecurity.com"}

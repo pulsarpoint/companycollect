@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hostgator
+display_name: "Hostgator"
+category: hosting
+website: https://www.hostgator.com
+aliases: ["Hostgator"]
+provider_keys: ["hostgator.com"]
+services:
+  - key: hostgator.dns
+    display_name: "Hostgator DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hostgator)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hostgator.com"}

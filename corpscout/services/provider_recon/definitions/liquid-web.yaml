@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: liquid-web
+display_name: "Liquid Web"
+category: hosting
+website: https://www.liquidweb.com
+aliases: ["Liquid Web"]
+provider_keys: ["liquidweb.com"]
+services:
+  - key: liquid-web.dns
+    display_name: "Liquid Web DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Liquid Web)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "liquidweb.com"}

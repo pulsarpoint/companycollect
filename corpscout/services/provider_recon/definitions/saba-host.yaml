@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: saba-host
+display_name: "Saba.Host"
+category: hosting
+website: https://saba.host
+aliases: ["Saba.Host"]
+provider_keys: ["saba.host"]
+services:
+  - key: saba-host.dns
+    display_name: "Saba.Host DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Saba.Host)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "saba.host"}

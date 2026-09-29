@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: zapier
+display_name: "Zapier"
+category: saas
+website: https://zapier.com
+aliases: ["Zapier"]
+provider_keys: []
+services:
+  - key: zapier.verification
+    display_name: "Zapier domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Zapier)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "zapier-domain-verification-challenge="}

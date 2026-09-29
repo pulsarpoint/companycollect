@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: world4you
+display_name: "World4You"
+category: hosting
+website: https://www.world4you.com
+aliases: ["World4You"]
+provider_keys: ["world4you.at"]
+services:
+  - key: world4you.dns
+    display_name: "World4You DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (World4You)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "world4you.at"}

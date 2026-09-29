@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: cursor
+display_name: "Cursor"
+category: saas
+website: https://www.cursor.com
+aliases: ["Cursor"]
+provider_keys: []
+services:
+  - key: cursor.verification
+    display_name: "Cursor domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Cursor)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "cursor-domain-verification"}

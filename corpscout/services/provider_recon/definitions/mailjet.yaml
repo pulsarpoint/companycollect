@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: mailjet
+display_name: "Mailjet"
+category: email
+website: https://www.mailjet.com/
+aliases: ["Mailjet"]
+provider_keys: ["mailjet.com"]
+services:
+  - key: mailjet.sending
+    display_name: "Mailjet outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Mailjet)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "mailjet.com"}

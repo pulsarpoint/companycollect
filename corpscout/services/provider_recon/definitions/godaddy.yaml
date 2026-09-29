@@ -4,10 +4,16 @@ display_name: GoDaddy
 category: dns
 country: US
 aliases: ["GoDaddy"]
-provider_keys: ["domaincontrol.com"]
+provider_keys: ["domaincontrol.com", "secureserver.net"]
 services:
   - key: godaddy.dns
     display_name: GoDaddy DNS
     service_types: [dns]
     dns_rules:
       - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "domaincontrol.com"}
+  - key: godaddy.sending
+    display_name: "GoDaddy outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (GoDaddy)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "secureserver.net"}

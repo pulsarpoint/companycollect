@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: logmein
+display_name: "LogMeIn"
+category: saas
+website: https://www.logmein.com
+aliases: ["LogMeIn"]
+provider_keys: []
+services:
+  - key: logmein.verification
+    display_name: "LogMeIn domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (LogMeIn)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "logmein-verification-code="}

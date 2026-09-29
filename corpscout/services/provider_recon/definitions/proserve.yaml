@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=./schema.json
+slug: proserve
+display_name: "Proserve"
+category: hosting
+website: https://proserve.nl
+aliases: ["Proserve"]
+provider_keys: ["appserved.nl", "dn-s.nl", "firstfind.net", "firstfind.nl"]
+services:
+  - key: proserve.dns
+    display_name: "Proserve DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Proserve)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "firstfind.net"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "firstfind.nl"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dn-s.nl"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "appserved.nl"}

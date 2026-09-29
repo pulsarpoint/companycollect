@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: idcloudhost
+display_name: "idCloudHost"
+category: hosting
+website: https://idcloudhost.com
+aliases: ["idCloudHost"]
+provider_keys: ["cloudhost.id"]
+services:
+  - key: idcloudhost.dns
+    display_name: "idCloudHost DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (idCloudHost)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "cloudhost.id"}

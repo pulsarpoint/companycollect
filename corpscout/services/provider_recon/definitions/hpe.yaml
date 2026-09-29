@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: hpe
+display_name: "Hewlett Packard Enterprise"
+category: cloud
+website: https://www.hpe.com/us/en/greenlake.html
+aliases: ["HPE GreenLake", "Hewlett Packard Enterprise"]
+provider_keys: []
+services:
+  - key: hpe.greenlake-verification
+    display_name: "HPE GreenLake domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (HPE GreenLake)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "hpe-greenlake-domain-verification="}

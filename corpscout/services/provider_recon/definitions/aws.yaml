@@ -60,6 +60,12 @@ services:
     display_name: Other AWS address space
     service_types: [iaas]
     traits: [cloud_provider_ip]
+  - key: aws.amazon-ses-verification
+    display_name: "Amazon SES domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Amazon SES)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "amazonses:"}
 feeds:
   - collector: aws_ip_ranges
     tag_map:

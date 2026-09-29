@@ -481,6 +481,7 @@ EXPECTED_MIGRATIONS = (
     "000467_corpscout_compact_domain_sources",
     "000468_corpscout_dns_detect",
     "000469_corpscout_domain_review_confidence",
+    "000470_corpscout_domain_service_intervals",
     "000471_corpscout_ip_enrichment_search",
 )
 
@@ -491,6 +492,11 @@ NOOP_MIGRATIONS = {"000276_noop"}
 # history. Nothing is left for these migrations to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
 EMPTIED_MIGRATIONS = {
+    # DNS signal retirement (2026-09-29): domain_signal_technologies and technology_fingerprints
+    # were dropped by hand after dns-detect (000468) replaced the old fingerprint pipeline.
+    "000357_corpscout_technology_fingerprints",
+    "000358_corpscout_domain_signal_technologies",
+    "000360_corpscout_domain_signal_technologies_partitioned",
     "000409_corpscout_company_brave_search_results",
     "000410_corpscout_company_brave_info",
     "000052_corpscout_lei_wikidata_companies_view",
@@ -4625,3 +4631,15 @@ def test_dns_detect_migration_defines_tables_and_history_views() -> None:
     # No deletes anywhere: results are versioned, never mutated.
     assert "DELETE" not in up.upper().replace("DELETED", "")
 
+
+
+def test_domain_service_intervals_migration_defines_both_tables() -> None:
+    up = (MIGRATIONS_DIR / "000470_corpscout_domain_service_intervals.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000470_corpscout_domain_service_intervals.down.sql").read_text()
+    assert "CREATE TABLE IF NOT EXISTS corpscout.domain_service_intervals" in up
+    assert "ORDER BY (provider_slug, service_type, root_domain, first_seen)" in up
+    assert "CREATE TABLE IF NOT EXISTS corpscout.provider_service_counts" in up
+    assert "ORDER BY (provider_slug, provider_key, service_type)" in up
+    assert up.count("PARTITION BY bucket") == 2
+    assert "DROP TABLE IF EXISTS corpscout.domain_service_intervals" in down
+    assert "DROP TABLE IF EXISTS corpscout.provider_service_counts" in down

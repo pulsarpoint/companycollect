@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: hypernode
+display_name: "Hypernode"
+category: hosting
+website: https://www.hypernode.com
+aliases: ["Hypernode"]
+provider_keys: ["hypernode.com", "hypernode.io"]
+services:
+  - key: hypernode.dns
+    display_name: "Hypernode DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Hypernode)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "hypernode.com"}
+  - key: hypernode.hosting
+    display_name: "Hypernode hosting"
+    service_types: [hosting]
+    note: "Ported from technology_fingerprints (Hypernode)."
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "hypernode.io"}

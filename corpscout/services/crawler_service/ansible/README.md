@@ -32,6 +32,11 @@ chmod 600 secrets.yml
 ansible-playbook site.yml
 ```
 
+For a code-only update to an already configured service, use
+`ansible-playbook site.yml --skip-tags credentials`. This preserves the existing
+server environment file and skips validation of replacement credentials. The
+controller still needs the current crawler API token for the idle check.
+
 `secrets.yml` is ignored by Git. Alternatively export `DEEPSEEK`,
 `OPENROUTER_API_KEY` and `CRAWL_API_TOKEN` on the controller.
 The default DeepSeek key is required; OpenRouter is optional. Use a random API
@@ -48,10 +53,15 @@ All non-secret deployment settings are in [vars.yml](vars.yml).
 ### Company matching result publication
 
 Apply ClickHouse migration 459 before deploying company matching. Configure
-`crawler_service_clickhouse_results_url`, `crawler_service_clickhouse_results_user`
-and `crawler_service_clickhouse_results_password` in the ignored `secrets.yml`.
-These are separate from the existing registry reader credentials. The writer
-needs `INSERT` on exactly these tables in the `corpscout` database:
+`crawler_service_clickhouse_results_native_url` in the ignored `secrets.yml`, or
+`CLICKHOUSE_RESULTS_NATIVE_URL` on the deployment controller. Use a native DSN such
+as `clickhouse://crawler_lookup_writer:password@clickhouse:9000/corpscout` (or
+`clickhouses://...:9440/corpscout` for TLS), with URL-encoded credentials. This
+replaces the old `CLICKHOUSE_RESULTS_URL`, `CLICKHOUSE_RESULTS_USER`, and
+`CLICKHOUSE_RESULTS_PASSWORD` settings; there is no HTTP fallback. Keep the existing
+registry HTTP reader credentials unchanged. The native result writer needs `SELECT`
+on `domains`, `websites`, and `pages`, plus `INSERT` on exactly these tables in the
+`corpscout` database:
 
 - `website_site_info_results`
 - `website_full_crawl_results`
@@ -81,6 +91,19 @@ Local files remain available for debugging, and SQLite retains delivery receipts
 and pending writes across restarts. A failed insert retries publication without
 repeating the crawl. Earlier version-1.0 lookup tests are not automatically
 backfilled because they did not produce the canonical basic crawl result.
+
+`crawler_service_sqlite_retention_days` defaults to `1` and sets
+`CRAWL_SQLITE_RETENTION_DAYS`. Every minute the crawler compacts up to 1,000
+delivered lookup payloads and removes up to 1,000 expired status events. It keeps
+delivery receipts, batch metadata, attempt summaries, pending ClickHouse writes,
+and pending S3 uploads. The retention period also bounds status-event replay;
+clients that fall behind should refresh current status.
+
+Cleanup checkpoints the SQLite write-ahead logs. New databases support incremental
+space reclamation; existing databases reuse freed pages without an automatic full
+`VACUUM`, which would require extra disk space. Saved crawl files, browser state,
+and installed application releases have separate lifecycles and are not deleted
+by SQLite cleanup. A low-disk warning reports remaining space at most once per hour.
 
 To store failed attempts and results in S3, add these
 settings to the ignored `secrets.yml` (the bucket must already exist):
@@ -213,7 +236,7 @@ and checks readiness. The previous release and legacy unit are retained for roll
 Central website registration requires `crawler_service_clickhouse_native_url` and
 `crawler_service_processing_pg_url`, mapped from `CLICKHOUSE_NATIVE_URL` and `PROCESSING_PG_URL`.
 Use the same inventory and processing coordinator as Dagster. Native credentials need central
-inventory SELECT/INSERT; the result HTTP credentials need central inventory SELECT as well as
+inventory SELECT/INSERT; the dedicated native result credentials need central inventory SELECT as well as
 result INSERT. The migration does not assign roles automatically. Both application wheels
 include the shared identity implementation. Coordinate migration 466 with historical backfill
 and writer activation; do not deploy this writer against the previous result schema.

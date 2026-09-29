@@ -1,21 +1,20 @@
-"""Actual native/HTTP publication, parent failure and origin isolation contracts."""
+"""Native publication, parent failure and origin isolation contracts."""
 
-import asyncio
 import importlib.util
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 import pytest
+from clickhouse_driver import Client
 from corpscout_identity.observations import register_crawl_results
 from corpscout_identity.registration import identify_website
 from corpscout_identity.urls import website_reference
-
 from dagster_v3.defs.website_crawl.queue_execution import (
     dispatchable_entries,
     remaining_crawl_entries,
 )
+
 from tests.identity_registration_support import identity_postgres as identity_postgres
 from tests.test_commoncrawl_domain_graph_integration import graph_ch as graph_ch
 from tests.test_crawl_draft_queue import add, start
@@ -31,7 +30,7 @@ from tests.test_website_crawl_input_assets import server as server
 
 
 def lookup_writer():
-    # This module depends only on the shared identity package and HTTP client;
+    # This module depends only on the shared identity package and native client;
     # exercise the deployed crawler publisher against the same migration fixture.
     path = (
         Path(__file__).parents[2]
@@ -82,7 +81,7 @@ def result(url="https://example.se/"):
     )
 
 
-def test_parent_registration_http_destination_and_replay(
+def test_parent_registration_native_destination_and_replay(
     previous_schema, identity_postgres, monkeypatch
 ):
     client = previous_schema
@@ -90,53 +89,43 @@ def test_parent_registration_http_destination_and_replay(
     document = result()
     writer = lookup_writer()
 
-    async def scenario():
-        async with httpx.AsyncClient(
-            base_url=client.test_http_url, auth=("test", "test")
-        ) as http:
-            with pytest.raises(ValueError, match="missing registered"):
-                await writer.publish(http, [document])
-            assert client.execute(
-                "SELECT count() FROM corpscout.website_company_lookup_results"
-            ) == [(0,)]
-            # A coordinator failure prevents registration, with no child publication.
-            with pytest.raises(ValueError, match="PROCESSING_PG_URL"):
-                monkeypatch.delenv("PROCESSING_PG_URL")
-                register_crawl_results(client, [document], source="test", run_id="test")
-            monkeypatch.setenv("PROCESSING_PG_URL", identity_postgres)
-            register_crawl_results(client, [document], source="test", run_id="test")
-            await writer.publish(http, [document])
-            # Retry a saved payload, without another crawl or a new attempt.
-            register_crawl_results(client, [document], source="test", run_id="test")
-            await writer.publish(http, [document])
-            for table in (
-                "website_company_lookup_results",
-                "website_site_info_results",
-            ):
-                assert client.execute(
-                    f"SELECT website_id,count() FROM corpscout.{table} FINAL GROUP BY website_id"
-                ) == [(document["website_id"], 1)]
-            target = identify_website("https://www.example.com/about")
-            assert client.execute(
-                "SELECT page_id,website_id,domain_id FROM corpscout.pages WHERE page_url=%(url)s",
-                {"url": target.page_url},
-            ) == [(target.page_id, target.website_id, target.domain_id)]
-            assert client.execute(
-                "SELECT uniqExact(website_id),count() FROM corpscout.websites"
-            ) == [(2, 2)]
+    with pytest.raises(ValueError, match="missing registered"):
+        writer.publish(client, [document])
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_company_lookup_results"
+    ) == [(0,)]
+    # A coordinator failure prevents registration, with no child publication.
+    with pytest.raises(ValueError, match="PROCESSING_PG_URL"):
+        monkeypatch.delenv("PROCESSING_PG_URL")
+        register_crawl_results(client, [document], source="test", run_id="test")
+    monkeypatch.setenv("PROCESSING_PG_URL", identity_postgres)
+    register_crawl_results(client, [document], source="test", run_id="test")
+    writer.publish(client, [document])
+    # Retry a saved payload, without another crawl or a new attempt.
+    register_crawl_results(client, [document], source="test", run_id="test")
+    writer.publish(client, [document])
+    for table in (
+        "website_company_lookup_results",
+        "website_site_info_results",
+    ):
+        assert client.execute(
+            f"SELECT website_id,count() FROM corpscout.{table} FINAL GROUP BY website_id"
+        ) == [(document["website_id"], 1)]
+    target = identify_website("https://www.example.com/about")
+    assert client.execute(
+        "SELECT page_id,website_id,domain_id FROM corpscout.pages WHERE page_url=%(url)s",
+        {"url": target.page_url},
+    ) == [(target.page_id, target.website_id, target.domain_id)]
+    assert client.execute(
+        "SELECT uniqExact(website_id),count() FROM corpscout.websites"
+    ) == [(2, 2)]
 
-            # A native registration in one database cannot authorize another HTTP destination.
-            def wrong_target(request):
-                return httpx.Response(200, text="")
 
-            async with httpx.AsyncClient(
-                base_url="http://another-database",
-                transport=httpx.MockTransport(wrong_target),
-            ) as wrong:
-                with pytest.raises(ValueError, match="missing registered"):
-                    await writer.publish(wrong, [document])
-
-    asyncio.run(scenario())
+    # Registration in one database cannot authorize another publication destination.
+    wrong = Client("another-database")
+    monkeypatch.setattr(wrong, "execute", lambda *_args, **_kwargs: [])
+    with pytest.raises(ValueError, match="missing registered"):
+        writer.publish(wrong, [document])
 
 
 def test_batch_admission_keeps_origins_separate_and_request_ids_stable(db):
@@ -195,7 +184,6 @@ def test_saved_crawl_observations_update_existing_inventory(
 
     from corpscout_identity.registration import WebsiteObservation, register_websites
     from dagster_clickhouse import ClickhouseResource
-
     from dagster_v3.defs.web_inventory.assets import (
         WebInventoryConfig,
         publish_web_inventory,

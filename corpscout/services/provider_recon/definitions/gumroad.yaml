@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: gumroad
+display_name: "Gumroad"
+category: saas
+website: https://gumroad.com
+aliases: ["Gumroad"]
+provider_keys: ["gumroad.com"]
+services:
+  - key: gumroad.hosting
+    display_name: "Gumroad hosting"
+    service_types: [hosting]
+    note: "Ported from technology_fingerprints (Gumroad)."
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "gumroad.com"}

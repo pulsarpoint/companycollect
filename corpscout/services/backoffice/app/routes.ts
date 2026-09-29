@@ -128,6 +128,7 @@ export default [
       // The same domain-scoped loaders and views serve both domain entry points.
       index("routes/admin-domain-index.ts"),
       route("dns", "routes/admin-domain-dns.tsx"),
+      route("services", "routes/admin-domain-services.tsx"),
       route("crawl", "routes/admin-se-domain-crawl.tsx", {
         id: "workspace-domain-crawl",
       }),
@@ -191,9 +192,11 @@ export default [
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     // provider-recon runs, per-feed churn and warnings (display only), and
     // each provider's missing/removed ranges.
+    route("providers", "routes/admin-providers.tsx"),
     route("provider-feeds", "routes/admin-provider-feeds.tsx"),
     route("provider-feeds/runs/:runId", "routes/admin-provider-feeds-run.tsx"),
     route("provider-feeds/providers/:slug", "routes/admin-provider-feeds-provider.tsx"),
+    route("provider-feeds/providers/:slug/domains", "routes/admin-provider-feeds-provider-domains.tsx"),
     route("crawls", "routes/admin-crawls.tsx"),
     route("crawls/llm-profiles", "routes/admin-crawl-llm-profiles.ts"),
     route("crawls/results", "routes/admin-crawl-result.tsx"),

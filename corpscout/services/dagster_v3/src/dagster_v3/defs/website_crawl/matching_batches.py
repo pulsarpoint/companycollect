@@ -4,10 +4,17 @@ import hashlib
 import json
 from collections import Counter
 from time import monotonic, sleep
+from urllib.parse import urlsplit
 
 import dagster as dg
 from corpscout_identity.urls import website_reference
-from requests.exceptions import RequestException
+from requests.exceptions import (
+    ChunkedEncodingError,
+    ConnectionError,
+    RequestException,
+    SSLError,
+    Timeout,
+)
 
 from dagster_v3.defs.common.llm_control import (
     check_admission,
@@ -17,32 +24,84 @@ from dagster_v3.defs.common.llm_control import (
 from dagster_v3.defs.website_crawl.outcome_logging import log_crawl_outcomes
 
 
+class CrawlerUnavailable(RuntimeError):
+    """The durable batch may still be running; retain it for a later resume."""
+
+
 def service_request(
-    http, base: str, method: str, path: str, payload: dict | None = None
+    http, base: str, method: str, path: str, payload: dict | None = None, *, log=None
 ) -> dict:
-    for attempt in range(6):
+    admission = (
+        method == "POST"
+        and path == "/v1/crawl-batches"
+        and payload is not None
+        and bool(payload.get("batch_id"))
+    )
+    retry_safe = admission or method == "GET"
+    attempts = 3 if admission else 6 if method == "GET" else 1
+    read_timeout = 180 if admission else 30
+    try:
+        parsed = urlsplit(base)
+        host = parsed.hostname
+        if host is not None and ":" in host:
+            host = f"[{host}]"
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        endpoint = (
+            f"{parsed.scheme}://{host}{port}"
+            if parsed.scheme and host else "<invalid endpoint>"
+        )
+    except ValueError:
+        endpoint = "<invalid endpoint>"
+    for attempt in range(1, attempts + 1):
+        retryable = False
         try:
             response = http.request(
                 method,
                 base + path,
                 json=payload,
-                timeout=(5, 30),
+                timeout=(5, read_timeout),
                 allow_redirects=False,
             )
-        except RequestException:
-            if attempt == 5:
-                raise RuntimeError(
-                    "Crawler connection lost; resume the same execution ID"
-                ) from None
+        except RequestException as failure:
+            # Exception messages can contain URL credentials, headers, or payloads.
+            causes = []
+            cause = failure
+            for _ in range(4):
+                causes.append(type(cause).__name__)
+                cause = cause.__cause__ or cause.__context__
+                if cause is None:
+                    break
+            reason = " <- ".join(causes)
+            retryable = (
+                isinstance(failure, (ConnectionError, Timeout, ChunkedEncodingError))
+                and not isinstance(failure, SSLError)
+            )
         else:
             if response.status_code in {200, 202}:
-                return response.json()
-            if response.status_code not in {429, 502, 503, 504}:
-                raise RuntimeError(
-                    f"Crawler rejected lookup {method} with HTTP {response.status_code}"
-                )
-        sleep(2)
-    raise RuntimeError("Crawler unavailable; resume the same execution ID")
+                try:
+                    document = response.json()
+                except ValueError:
+                    document = None
+                if isinstance(document, dict):
+                    return document
+                reason, retryable = "InvalidJSONResponse", True
+            else:
+                reason = f"HTTP {response.status_code}"
+                retryable = response.status_code in {408, 429, 502, 503, 504}
+        detail = (
+            f"Crawler {method} failed with {reason}; endpoint={endpoint!r} path={path!r} "
+            f"attempt={attempt}/{attempts} connect_timeout=5s read_timeout={read_timeout}s"
+        )
+        if not retry_safe or not retryable or attempt == attempts:
+            if retry_safe and retryable:
+                raise CrawlerUnavailable(
+                    f"{detail}; batch retained, resume the same execution ID"
+                ) from None
+            raise RuntimeError(detail) from None
+        delay = min(2 ** attempt, 10)
+        if log is not None:
+            log.warning("%s; retrying in %ss with the same request identity", detail, delay)
+        sleep(delay)
 
 
 def process_matching_batch(
@@ -83,7 +142,6 @@ def process_matching_batch(
                 service="crawler" if owner else None,
                 external_request_id=batch_id,
             )
-        active = True
         state = service_request(
             http,
             base,
@@ -95,7 +153,9 @@ def process_matching_batch(
                 "run_id": items[0]["run_id"],
                 "entries": entries,
             },
+            log=context.log,
         )
+        active = True
         started, logged = monotonic(), 0.0
         baseline = state["processed"]
         while state["state"] != "published":
@@ -118,7 +178,9 @@ def process_matching_batch(
                     )
                 logged = monotonic()
             sleep(2)
-            state = service_request(http, base, "GET", "/v1/crawl-batches/" + batch_id)
+            state = service_request(
+                http, base, "GET", "/v1/crawl-batches/" + batch_id, log=context.log
+            )
         # The writer publishes the matching summary last, after the ordinary result.
         ids = tuple(item["request_id"] for item in items)
         identities = tuple((entry["request"]["request_id"], website_reference(
@@ -199,11 +261,17 @@ def process_matching_batch(
                 )
             )
         return len(items)
+    except CrawlerUnavailable:
+        # A timed-out POST may have committed, and a failed poll does not stop
+        # its worker. Cancelling here would turn a recoverable outage into lost work.
+        active = False
+        raise
     finally:
         if active:
             try:
-                service_request(http, base, "DELETE", "/v1/crawl-batches/" + batch_id)
+                service_request(
+                    http, base, "DELETE", "/v1/crawl-batches/" + batch_id, log=context.log
+                )
             except RuntimeError as error:
-                # Admission can fail before the batch exists. A cleanup failure
-                # must not replace the original processing/admission exception.
+                # A cleanup failure must not replace the processing exception.
                 context.log.warning("Could not cancel crawl batch %s: %s", batch_id, error)

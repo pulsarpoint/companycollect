@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: 34sp
+display_name: "34SP.com"
+category: hosting
+website: https://www.34sp.com
+aliases: ["34SP.com"]
+provider_keys: ["34sp.com"]
+services:
+  - key: 34sp.com-dns
+    display_name: "34SP.com DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (34SP.com)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "34sp.com"}

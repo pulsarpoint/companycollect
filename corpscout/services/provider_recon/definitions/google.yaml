@@ -26,6 +26,8 @@ services:
     service_types: [saas_verification]
     dns_rules:
       - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "google-site-verification=", confidence: 0.95}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "firebase="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "google-gws-recovery-domain-verification="}
   - key: google.cloud-dns
     display_name: Google Cloud DNS
     service_types: [dns]

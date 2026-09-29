@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: vercel
+display_name: "Vercel"
+category: cloud
+website: https://vercel.com
+aliases: ["Vercel"]
+provider_keys: ["vercel-dns.com"]
+services:
+  - key: vercel.dns
+    display_name: "Vercel DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Vercel)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "vercel-dns.com"}

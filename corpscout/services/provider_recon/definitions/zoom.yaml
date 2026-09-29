@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=./schema.json
+slug: zoom
+display_name: "Zoom"
+category: saas
+website: https://www.zoom.com
+aliases: ["Zoom"]
+provider_keys: []
+services:
+  - key: zoom.verification
+    display_name: "Zoom domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Zoom)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "zoom-domain-verification="}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "zoom_verify_"}

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: mailchannels
+display_name: "MailChannels"
+category: email
+website: https://www.mailchannels.com
+aliases: ["MailChannels"]
+provider_keys: ["mailchannels.net"]
+services:
+  - key: mailchannels.mail
+    display_name: "MailChannels"
+    service_types: [email]
+    note: "Ported from technology_fingerprints (MailChannels)."
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mailchannels.net"}
+  - key: mailchannels.sending
+    display_name: "MailChannels outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (MailChannels)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "relay.mailchannels.net"}

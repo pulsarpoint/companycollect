@@ -77,7 +77,6 @@ def isolated_clickhouse_service():
         with resource.get_connection() as client:
             for name in [
                 "000350_corpscout_technology_catalog.up.sql",
-                "000357_corpscout_technology_fingerprints.up.sql",
                 "000361_corpscout_technology_catalog_publish_log.up.sql",
                 "000388_corpscout_technology_aliases.up.sql",
                 "000389_corpscout_technology_proposals.up.sql",
@@ -136,8 +135,7 @@ def test_catalog_asset_publishes_aliases_clears_them_and_rejects_bad_input(
     monkeypatch.setattr(ObjectStoreResource, "ensure_bucket", lambda self: None)
     monkeypatch.setattr(ObjectStoreResource, "client", lambda self: None)
     monkeypatch.setattr(tables, "MIN_TECHNOLOGY_CATALOG_ROWS", 2)
-    monkeypatch.setattr(tables, "MIN_TECHNOLOGY_FINGERPRINT_ROWS", 0)
-    for name in ["technologies.json", "categories.json", "fingerprints.json"]:
+    for name in ["technologies.json", "categories.json"]:
         (tmp_path / name).write_text("{}", encoding="utf-8")
     store = ObjectStoreResource(
         endpoint_url="http://127.0.0.1:1", access_key="test", secret_key="test"

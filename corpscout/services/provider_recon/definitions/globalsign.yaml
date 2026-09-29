@@ -9,3 +9,4 @@ services:
     service_types: [saas_verification]
     dns_rules:
       - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "globalsign-domain-verification=", confidence: 0.85}
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "_globalsign-domain-verification="}

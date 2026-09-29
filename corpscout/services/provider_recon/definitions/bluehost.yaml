@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: bluehost
+display_name: "Bluehost"
+category: hosting
+website: https://www.bluehost.com
+aliases: ["Bluehost"]
+provider_keys: ["bluehost.com"]
+services:
+  - key: bluehost.dns
+    display_name: "Bluehost DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Bluehost)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "bluehost.com"}

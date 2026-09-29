@@ -11,16 +11,18 @@ from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, effective_
 from tests.test_website_crawl_llm import LLM, ROW, SETTINGS
 
 
-def test_failed_admission_keeps_original_error_when_cleanup_cannot_find_batch():
+@pytest.mark.parametrize("status", [409, 500])
+def test_failed_admission_does_not_cancel_unattached_batch(status):
     context = SimpleNamespace(log=Mock())
     http = Mock()
-    http.request.side_effect = [SimpleNamespace(status_code=500), SimpleNamespace(status_code=404)]
+    http.request.return_value = SimpleNamespace(status_code=status)
     item = {"request_json": json.dumps({"request_id": "request", "url": "https://example.se"}),
             "request_id": "request", "crawl_type": "site_info", "input_revision": 1,
             "work_key": "key", "run_id": "execution"}
-    with pytest.raises(RuntimeError, match="POST with HTTP 500"):
+    with pytest.raises(RuntimeError, match=f"POST failed with HTTP {status}"):
         process_matching_batch(context, Mock(), http, "http://crawler", [item])
-    context.log.warning.assert_called_once()
+    http.request.assert_called_once()
+    context.log.warning.assert_not_called()
 
 
 def test_saved_request_matching_flags_change_work_identity_and_can_be_overridden():

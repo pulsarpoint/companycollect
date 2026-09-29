@@ -33,6 +33,7 @@ class LookupStore:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
+            PRAGMA auto_vacuum=INCREMENTAL;
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS batches (
@@ -49,6 +50,7 @@ class LookupStore:
             CREATE TABLE IF NOT EXISTS publications (
                 request_id TEXT NOT NULL, attempt INTEGER NOT NULL,
                 payload TEXT NOT NULL, published_at TEXT, error TEXT,
+                payload_pruned_at TEXT,
                 PRIMARY KEY(request_id, attempt)
             );
         """)
@@ -67,6 +69,9 @@ class LookupStore:
                 self.db.execute("ALTER TABLE items_by_batch RENAME TO items")
                 self.db.execute("CREATE INDEX items_batch ON items(batch_id)")
         self.db.execute("CREATE INDEX IF NOT EXISTS items_request ON items(request_id)")
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(publications)")}
+        if "payload_pruned_at" not in columns:
+            self.db.execute("ALTER TABLE publications ADD COLUMN payload_pruned_at TEXT")
 
     def submit(self, batch_id: str, payload: dict, items: list[dict]) -> None:
         encoded = json.dumps(payload, sort_keys=True)
@@ -152,7 +157,10 @@ class LookupStore:
             WHERE i.request_id IS NULL AND p.published_at IS NULL LIMIT 100""").fetchall()
         if singles:
             groups.append((None, [dict(row) for row in singles]))
-        batches = self.db.execute("""SELECT b.batch_id FROM batches b WHERE published_at IS NULL
+        batches = self.db.execute("""SELECT b.batch_id FROM batches b
+            WHERE (b.published_at IS NULL OR (NOT b.cancelled AND EXISTS (
+                SELECT 1 FROM publications p JOIN items i USING(request_id)
+                WHERE i.batch_id=b.batch_id AND p.published_at IS NULL)))
             AND NOT EXISTS (SELECT 1 FROM items i WHERE i.batch_id=b.batch_id AND NOT i.cancelled
                 AND NOT EXISTS (SELECT 1 FROM publications p WHERE p.request_id=i.request_id))
             ORDER BY b.created_at LIMIT 1""").fetchall()
@@ -175,8 +183,17 @@ class LookupStore:
                 [(timestamp, error, r["request_id"], r["attempt"]) for r in rows],
             )
             if batch_id is not None:
+                # Submission can reopen a cancelled batch while these rows are
+                # being published. Acknowledge the snapshot, not unfinished members.
                 self.db.execute(
-                    "UPDATE batches SET published_at=?,error=? WHERE batch_id=?",
+                    """UPDATE batches SET published_at=CASE WHEN
+                        NOT EXISTS (SELECT 1 FROM items i WHERE i.batch_id=batches.batch_id
+                            AND NOT i.cancelled AND NOT EXISTS (
+                                SELECT 1 FROM publications p WHERE p.request_id=i.request_id
+                                    AND p.published_at IS NOT NULL))
+                        AND NOT EXISTS (SELECT 1 FROM publications p JOIN items i USING(request_id)
+                            WHERE i.batch_id=batches.batch_id AND p.published_at IS NULL)
+                        THEN ? ELSE NULL END,error=? WHERE batch_id=?""",
                     (timestamp, error, batch_id),
                 )
 
@@ -203,18 +220,20 @@ class LookupStore:
             sum(json_extract(p.payload,'$.status')='matched') AS matched,
             sum(json_extract(p.payload,'$.status')='not_found') AS not_found,
             sum(json_extract(p.payload,'$.status')='already_mapped') AS already_mapped,
-            sum(json_extract(p.payload,'$.status') IN ('failed','cancelled')) AS failed
+            sum(json_extract(p.payload,'$.status') IN ('failed','cancelled')) AS failed,
+            sum(p.published_at IS NULL AND (NOT i.cancelled OR p.request_id IS NOT NULL)) AS unacknowledged
             FROM items i LEFT JOIN publications p USING(request_id) WHERE i.batch_id=?""",
             (batch_id,),
         ).fetchone()
-        result = {key: counts[key] or 0 for key in counts.keys()}
+        result = {key: counts[key] or 0 for key in counts.keys() if key != "unacknowledged"}
         settled = result["processed"] + result["skipped"] == result["total"]
+        published_at = batch["published_at"] if not counts["unacknowledged"] else None
         state = (
             ("cancelled" if settled else "cancelling")
             if batch["cancelled"]
             else (
                 "published"
-                if batch["published_at"]
+                if published_at
                 else "publishing"
                 if settled
                 else "running"
@@ -225,16 +244,18 @@ class LookupStore:
             batch_id=batch_id,
             state=state,
             created_at=batch["created_at"],
-            published_at=batch["published_at"],
+            published_at=published_at,
             publication_error=batch["error"],
         )
 
     def cancel(self, batch_id: str) -> list[str]:
         with self.db:
-            self.db.execute(
-                "UPDATE batches SET cancelled=1 WHERE batch_id=? AND published_at IS NULL",
-                (batch_id,),
-            )
+            batch = self.snapshot(batch_id)
+            if batch is not None and batch["published_at"] is None:
+                self.db.execute(
+                    "UPDATE batches SET cancelled=1,published_at=NULL WHERE batch_id=?",
+                    (batch_id,),
+                )
             self.db.execute(
                 "UPDATE items SET cancelled=1 WHERE batch_id=? AND NOT dispatched",
                 (batch_id,),
@@ -249,6 +270,39 @@ class LookupStore:
                 (batch_id,),
             )
         ]
+
+    def prune(self, before: str, *, limit: int = 100) -> dict[str, int]:
+        """Compact acknowledged results without forgetting delivery or batch identity."""
+        if limit < 1:
+            raise ValueError("Retention limit must be positive")
+        with self.db:
+            count = self.db.execute(
+                """UPDATE publications
+                SET payload=json_object('status',json_extract(payload,'$.status')),
+                    payload_pruned_at=?
+                WHERE rowid IN (
+                    SELECT p.rowid FROM publications p
+                    WHERE p.published_at < ? AND p.payload_pruned_at IS NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM items i JOIN batches b USING(batch_id)
+                        WHERE i.request_id=p.request_id
+                            AND (b.published_at IS NULL OR b.published_at >= ?)
+                    )
+                    ORDER BY p.published_at,p.request_id,p.attempt LIMIT ?
+                )""",
+                (utc_now(), before, before, limit),
+            ).rowcount
+        # Existing databases without auto-vacuum reuse free pages in place. A
+        # full VACUUM would need another database-sized allocation on this disk.
+        if self.db.execute("PRAGMA auto_vacuum").fetchone()[0] == 2:
+            self.db.execute("PRAGMA incremental_vacuum(128)").fetchall()
+        self.db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+        page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+        return {
+            "publications": count,
+            "reusable_bytes": self.db.execute("PRAGMA freelist_count").fetchone()[0] * page_size,
+            "database_bytes": self.db.execute("PRAGMA page_count").fetchone()[0] * page_size,
+        }
 
     def close(self) -> None:
         self.db.close()

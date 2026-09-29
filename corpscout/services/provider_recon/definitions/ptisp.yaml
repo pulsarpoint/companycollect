@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: ptisp
+display_name: "PTisp"
+category: hosting
+website: https://ptisp.pt
+aliases: ["PTisp"]
+provider_keys: ["mydnspt.net"]
+services:
+  - key: ptisp.dns
+    display_name: "PTisp DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (PTisp)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "mydnspt.net"}

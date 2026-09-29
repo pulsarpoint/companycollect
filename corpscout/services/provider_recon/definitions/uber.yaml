@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: uber
+display_name: "Uber"
+category: saas
+website: https://www.uber.com
+aliases: ["Uber"]
+provider_keys: []
+services:
+  - key: uber.verification
+    display_name: "Uber domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Uber)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "uber-domain-verification="}

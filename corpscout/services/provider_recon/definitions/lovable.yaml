@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: lovable
+display_name: "Lovable"
+category: saas
+website: https://lovable.dev
+aliases: ["Lovable"]
+provider_keys: []
+services:
+  - key: lovable.verification
+    display_name: "Lovable domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Lovable)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "lovable_verification="}

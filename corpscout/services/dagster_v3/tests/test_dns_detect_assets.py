@@ -203,3 +203,80 @@ def test_daily_schedule_requests_every_partition() -> None:
         context = dg.build_schedule_context(instance=instance, scheduled_execution_time=datetime(2026, 10, 1, 5, 20))
         requests = assets.dns_record_services_daily(context)
     assert len(requests) == sql.PARTITION_COUNT and requests[3].run_key == "daily-20261001-hash_003"
+
+
+def test_selection_plan_is_incremental_only_with_a_watermark_and_unchanged_versions() -> None:
+    now = {"rules_version": "R", "ip_version": "I"}
+    previous = {"watermark": "2026-09-26 00:00:00.000", "rules_version": "R", "ip_version": "I"}
+    assert assets.selection_since(previous, now) == "2026-09-26 00:00:00.000"
+    assert assets.selection_since(None, now) is None
+    assert assets.selection_since({**previous, "watermark": ""}, now) is None
+    assert assets.selection_since({**previous, "ip_version": "old"}, now) is None
+    assert assets.selection_since({**previous, "rules_version": "old"}, now) is None
+
+
+def test_resolve_partition_incremental_passes_the_watermark() -> None:
+    reader = FakeReader(rows(1))
+    counts = assets.resolve_partition(reader, FakeWriter(), FakeService(), 7, dg.get_dagster_logger(),
+                                      versions={"rules_version": "R", "ip_version": "I"}, since="2026-09-26 00:00:00.000")
+    query, params = reader.queries[0]
+    assert "last_loaded_at > toDateTime64(%(since)s, 3, 'UTC')" in query
+    assert params["since"] == "2026-09-26 00:00:00.000" and counts["records"] == 1
+
+
+class WatermarkReader(FakeReader):
+    def execute(self, query, params=None, **_):
+        if "max(last_loaded_at)" in query:
+            return [(datetime(2026, 9, 29, 4, 0, 0, 123000),)]
+        return super().execute(query, params)
+
+
+class FakeClickhouse:
+    def __init__(self, reader, writer):
+        self.clients = iter([reader, writer])
+        self.reader, self.writer = reader, writer
+
+    @contextmanager
+    def get_connection(self):
+        yield next(self.clients)
+
+
+def test_asset_records_watermark_and_versions_and_runs_full_without_history() -> None:
+    reader, writer = WatermarkReader(rows(2)), FakeWriter()
+    ch = FakeClickhouse(reader, writer)
+    ch.clients = iter([reader, reader, writer])  # table check, reader, writer
+    with dg.instance_for_test() as instance:
+        context = dg.build_asset_context(partition_key="hash_007", instance=instance)
+        result = assets.dns_record_services_clickhouse(context, clickhouse=ch, dns_detect=FakeService())
+    meta = result.metadata
+    assert meta["mode"] == "full" and meta["watermark"] == "2026-09-29 04:00:00.123"
+    assert meta["rules_version"] == "R" and meta["ip_version"] == "I" and meta["records"] == 2
+    assert "last_loaded_at >" not in reader.queries[0][0]
+
+
+def test_asset_goes_incremental_after_a_successful_run_under_the_same_versions() -> None:
+    reader, writer = WatermarkReader(rows(1)), FakeWriter()
+    ch = FakeClickhouse(reader, writer)
+    ch.clients = iter([reader, reader, writer])
+    with dg.instance_for_test() as instance:
+        instance.report_runless_asset_event(dg.AssetMaterialization(
+            asset_key="dns_record_services_clickhouse", partition="hash_007",
+            metadata={"watermark": "2026-09-28 20:00:00.000", "rules_version": "R", "ip_version": "I"}))
+        context = dg.build_asset_context(partition_key="hash_007", instance=instance)
+        result = assets.dns_record_services_clickhouse(context, clickhouse=ch, dns_detect=FakeService())
+    query, params = reader.queries[0]
+    assert result.metadata["mode"] == "incremental"
+    assert params["since"] == "2026-09-28 20:00:00.000" and "last_loaded_at >" in query
+
+
+def test_watermark_query_is_executed_with_params_so_the_driver_renders_modulo() -> None:
+    calls = []
+
+    class Reader:
+        def execute(self, query, params=None, **_):
+            calls.append((query, params))
+            return [[None]]
+
+    assets.read_watermark(Reader(), 3)
+    query, params = calls[0]
+    assert "%%" in query and params == {}

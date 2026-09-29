@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: leaseweb
+display_name: "Leaseweb"
+category: hosting
+website: https://www.leaseweb.com
+aliases: ["Leaseweb"]
+provider_keys: ["leaseweb.nl"]
+services:
+  - key: leaseweb.dns
+    display_name: "Leaseweb DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Leaseweb)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "leaseweb.nl"}

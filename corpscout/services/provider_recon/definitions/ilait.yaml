@@ -4,7 +4,7 @@ display_name: iLait
 category: hosting
 country: SE
 aliases: ["iLait"]
-provider_keys: ["ilait.se"]
+provider_keys: ["ilait.se", "ilait.com"]
 services:
   - key: ilait.dns
     display_name: iLait DNS
@@ -16,3 +16,4 @@ services:
     service_types: [email]
     dns_rules:
       - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "ilait.se"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "ilait.com"}

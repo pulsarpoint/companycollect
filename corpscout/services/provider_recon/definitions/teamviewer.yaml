@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: teamviewer
+display_name: "TeamViewer"
+category: saas
+website: https://monitis.com
+aliases: ["TeamViewer"]
+provider_keys: []
+services:
+  - key: teamviewer.verification
+    display_name: "TeamViewer domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (TeamViewer)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "teamviewer-sso-verification="}

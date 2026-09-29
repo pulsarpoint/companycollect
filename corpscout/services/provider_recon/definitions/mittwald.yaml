@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=./schema.json
+slug: mittwald
+display_name: "Mittwald"
+category: hosting
+website: https://www.mittwald.de
+aliases: ["Mittwald"]
+provider_keys: ["agenturserver.co", "agenturserver.de", "agenturserver.it"]
+services:
+  - key: mittwald.dns
+    display_name: "Mittwald DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Mittwald)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "agenturserver.co"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "agenturserver.de"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "agenturserver.it"}

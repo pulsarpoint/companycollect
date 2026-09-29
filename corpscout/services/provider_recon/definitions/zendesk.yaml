@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: zendesk
+display_name: "Zendesk"
+category: email
+website: https://zendesk.com
+aliases: ["Zendesk"]
+provider_keys: ["zendesk.com"]
+services:
+  - key: zendesk.sending
+    display_name: "Zendesk outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Zendesk)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "mail.zendesk.com"}

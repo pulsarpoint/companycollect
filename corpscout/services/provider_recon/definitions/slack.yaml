@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: slack
+display_name: "Slack"
+category: saas
+website: https://slack.com
+aliases: ["Slack"]
+provider_keys: []
+services:
+  - key: slack.verification
+    display_name: "Slack domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Slack)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "slack-domain-verification="}

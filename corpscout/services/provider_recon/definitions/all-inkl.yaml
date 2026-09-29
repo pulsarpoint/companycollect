@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: all-inkl
+display_name: "ALL-INKL"
+category: hosting
+website: https://all-inkl.com
+aliases: ["ALL-INKL"]
+provider_keys: ["kasserver.com"]
+services:
+  - key: all-inkl.dns
+    display_name: "ALL-INKL DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (ALL-INKL)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "kasserver.com"}

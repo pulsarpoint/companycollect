@@ -39,13 +39,6 @@ from dagster_v3.defs.technology_catalog.catalog import (
     load_extension_layer,
     merge_layers,
 )
-from dagster_v3.defs.technology_catalog import detection
-from dagster_v3.defs.technology_catalog.fingerprints import (
-    Fingerprint,
-    extract_dns_fingerprints,
-    extract_override_fingerprints,
-    load_fingerprint_overrides,
-)
 from dagster_v3.defs.technology_catalog.icons import (
     IconRef,
     IconSyncResult,
@@ -84,14 +77,12 @@ def custom_source_dir() -> Path:
 # publishes to ClickHouse. Their combined hash is the asset code_version, so
 # Dagster renders technology_catalog_clickhouse UNSYNCED whenever any of them
 # changes and is deployed but not yet re-materialized — the visible cue that
-# the catalog + fingerprint tables (and therefore the DNS detections) are
-# behind the repo. The overlay SHA is deliberately excluded: it is fetched at
+# the catalog tables are behind the repo. The overlay SHA is deliberately excluded: it is fetched at
 # run time and the weekly schedule already covers it; this version is only
 # about OUR edits to the custom definitions.
 _DEFINITION_FILES = (
     "technologies.json",
     "categories.json",
-    "fingerprints.json",
     "technology_aliases.json",
 )
 
@@ -261,39 +252,6 @@ def technology_catalog_clickhouse(
         floor=tables.MIN_TECHNOLOGY_CATALOG_ROWS,
     )
 
-    # The executable side of the same merge: the winning entries' Wappalyzer
-    # dns blocks plus the pattern-only overrides for existing catalog names,
-    # published in the same run so both tables always carry one consistent
-    # source_version per layer.
-    fingerprints = extract_dns_fingerprints(extension, overlay, custom)
-    overrides, overrides_version = load_fingerprint_overrides(custom_dir)
-    known_names = (
-        set(extension.technologies)
-        | set(overlay.technologies)
-        | set(custom.technologies)
-    )
-    override_fingerprints, unknown_names = extract_override_fingerprints(
-        overrides, known_names, overrides_version
-    )
-    for name in unknown_names:
-        context.log.warning(
-            "fingerprints.json names %r which no catalog layer carries; "
-            "its patterns were skipped",
-            name,
-        )
-    fingerprints = fingerprints + override_fingerprints
-    fingerprint_count = _staged_replace(
-        clickhouse,
-        table=tables.TECHNOLOGY_FINGERPRINTS_TABLE,
-        columns=tables.TECHNOLOGY_FINGERPRINTS_COLUMNS,
-        rows=build_fingerprint_rows(
-            fingerprints,
-            source_run_id=context.run_id,
-            updated_at=updated_at,
-        ),
-        floor=tables.MIN_TECHNOLOGY_FINGERPRINT_ROWS,
-    )
-    context.log.info("technology_fingerprints: %d rows", fingerprint_count)
 
     alias_rows = build_alias_rows(
         aliases,
@@ -327,7 +285,7 @@ def technology_catalog_clickhouse(
         )
     }
 
-    # Append one provenance row AFTER all three tables are published, so the log
+    # Append one provenance row AFTER both tables are published, so the log
     # only ever records completed publishes. definitions_hash is the full
     # content hash of the custom files (its 12-char prefix is the asset
     # code_version); a run whose hash differs from the previous row is a real
@@ -342,9 +300,11 @@ def technology_catalog_clickhouse(
             overlay_sha,
             tables.EXTENSION_VERSION,
             row_count,
-            fingerprint_count,
+            # DNS fingerprints retired 2026-09-29 (dns-detect replaced them);
+            # the ledger keeps its columns, now always 0.
+            0,
             per_source[tables.CUSTOM_SOURCE],
-            len(override_fingerprints),
+            0,
         ),
     )
 
@@ -358,7 +318,6 @@ def technology_catalog_clickhouse(
             "overlay_icon_fetches": icon_result.overlay_fetches,
             "overlay_sha": overlay_sha,
             "custom_version": custom.source_version,
-            "fingerprint_rows": fingerprint_count,
             "alias_rows": alias_count,
             "alias_source_version": alias_source_version,
             "reviewed_technology_rows": len(reviewed.technologies),
@@ -374,29 +333,6 @@ def _append_publish_log(clickhouse: ClickhouseResource, row: tuple) -> None:
     column_list = ", ".join(tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS)
     with clickhouse.get_connection() as client:
         client.execute(f"INSERT INTO {qualified} ({column_list}) VALUES", [row])
-
-
-def build_fingerprint_rows(
-    fingerprints: list[Fingerprint],
-    *,
-    source_run_id: str,
-    updated_at: datetime,
-) -> list[tuple]:
-    """Rows in tables.TECHNOLOGY_FINGERPRINTS_COLUMNS order (migration 000357)."""
-    return [
-        (
-            fingerprint.technology,
-            fingerprint.signal_type,
-            fingerprint.pattern,
-            fingerprint.confidence,
-            fingerprint.version_template,
-            fingerprint.source,
-            fingerprint.source_version,
-            source_run_id,
-            updated_at,
-        )
-        for fingerprint in fingerprints
-    ]
 
 
 def _staged_replace(
@@ -432,209 +368,10 @@ def _staged_replace(
     return row_count
 
 
-DETECTION_PARTITIONS = dg.StaticPartitionsDefinition(
-    detection.detection_partition_keys()
-)
-
-
-@dg.asset(
-    name="domain_signal_technologies_clickhouse",
-    deps=[dg.AssetKey("technology_catalog_clickhouse")],
-    group_name=GROUP_NAME,
-    kinds={"clickhouse", "sql"},
-    partitions_def=DETECTION_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    pool="domain_signal_detection",
-    # Recorded for lineage, but Dagster does NOT compute staleness for
-    # partitioned assets, so this never drives an UNSYNCED badge. The
-    # detection_reflects_current_catalog asset check is what surfaces "this
-    # detection is behind the catalog" in the UI instead. Bump the suffix when
-    # the detection SQL in detection.py changes materially.
-    code_version=f"{custom_definitions_version()}-detect1",
-    description=(
-        "DNS-derived technology detections (corpscout.domain_signal_"
-        "technologies, migration 000359), 128 static hash partitions "
-        "(cityHash64(root_domain) %% 128 — refining the DNS record store's "
-        "%% 16 partition key). Each partition run extracts one bucket's "
-        "candidates, matches the dns_* fingerprints in one Vectorscan pass "
-        "per signal type plus the pattern-free self-hosted-email rule, and "
-        "atomically swaps ONLY its slice via REPLACE PARTITION — every unit "
-        "is minutes long and independently retryable. Evidence and matched "
-        "pattern are kept per row so serving pages can show why a "
-        "technology was detected."
-    ),
-)
-def domain_signal_technologies_clickhouse(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=RESOLVED_DATABASE,
-        tables=(tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE,),
-    )
-    bucket = detection.partition_bucket(context.partition_key)
-    qualified = f"`{RESOLVED_DATABASE}`.`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
-    stage = (
-        f"`{RESOLVED_DATABASE}`."
-        f"`_tmp_{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}_{uuid.uuid4().hex}`"
-    )
-    candidates = (
-        f"`{RESOLVED_DATABASE}`.`_tmp_dns_signal_candidates_{uuid.uuid4().hex}`"
-    )
-    detected_at = datetime.now(UTC).replace(tzinfo=None)
-    scalars = {"source_run_id": context.run_id, "detected_at": detected_at}
-    settings = {
-        "max_bytes_before_external_group_by": 8 * 1024**3,
-        "max_memory_usage": 12 * 1024**3,
-    }
-    with clickhouse.get_connection() as client:
-        fingerprint_rows = client.execute(
-            f"""SELECT technology, signal_type, pattern, confidence, source
-FROM `{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_FINGERPRINTS_TABLE}` FINAL
-ORDER BY signal_type, technology, pattern"""
-        )
-        signals, skipped = detection.group_fingerprints(fingerprint_rows)
-        for technology, pattern in skipped:
-            context.log.warning(
-                "%s: pattern %r uses constructs Vectorscan cannot compile; skipped",
-                technology,
-                pattern,
-            )
-        try:
-            client.execute(f"CREATE TABLE {stage} AS {qualified}")
-            client.execute(detection.candidates_table_ddl(candidates))
-            # These ClickHouse INSERT…SELECTs block for minutes; log the phase
-            # BEFORE each so the run shows what it is doing rather than sitting
-            # silent inside a single driver call (the candidate scan is the
-            # long pole — one full pass over this bucket's DNS partition).
-            context.log.info("bucket %d: extracting candidates…", bucket)
-            client.execute(
-                detection.candidates_insert_sql(candidates, bucket),
-                settings=settings,
-            )
-            candidate_count = int(
-                client.execute(f"SELECT count() FROM {candidates}")[0][0]
-            )
-            context.log.info(
-                "bucket %d: %d candidates extracted, matching %d fingerprint signals…",
-                bucket,
-                candidate_count,
-                len(signals),
-            )
-            for signal in signals:
-                client.execute(
-                    detection.detection_insert_sql(
-                        stage, candidates, signal.signal_type
-                    ),
-                    {
-                        "technologies": signal.technologies,
-                        "patterns": signal.patterns,
-                        "match_patterns": signal.match_patterns,
-                        "confidences": signal.confidences,
-                        "sources": signal.sources,
-                        **scalars,
-                    },
-                    settings=settings,
-                )
-            client.execute(
-                detection.self_hosted_insert_sql(stage, candidates),
-                scalars,
-                settings=settings,
-            )
-            context.log.info("bucket %d: publishing partition…", bucket)
-            per_signal = client.execute(
-                f"SELECT signal_type, count() FROM {stage} GROUP BY signal_type"
-            )
-            rows = sum(count for _, count in per_signal)
-            if rows < tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS_PER_PARTITION:
-                raise ValueError(
-                    f"bucket {bucket} produced {rows} rows, below the "
-                    f"{tables.MIN_DOMAIN_SIGNAL_TECHNOLOGY_ROWS_PER_PARTITION} "
-                    "floor — refusing to replace the partition"
-                )
-            client.execute(detection.replace_partition_sql(qualified, stage, bucket))
-        finally:
-            client.execute(f"DROP TABLE IF EXISTS {candidates}")
-            client.execute(f"DROP TABLE IF EXISTS {stage}")
-    for signal_type, count in sorted(per_signal):
-        context.log.info("%s: %d rows", signal_type, count)
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "candidates": candidate_count,
-            "skipped_patterns": len(skipped),
-            **{signal_type: count for signal_type, count in per_signal},
-        }
-    )
-
-
-@dg.asset_check(
-    asset=domain_signal_technologies_clickhouse,
-    name="detection_reflects_current_catalog",
-    description=(
-        "WARN when the DNS detections are behind the technology catalog: "
-        "Dagster does not compute staleness for partitioned assets, so this "
-        "check stands in for the missing UNSYNCED badge. It compares each "
-        "partition's build time against the latest technology_catalog publish "
-        "(technology_catalog_publish_log) — a partition built before the "
-        "current catalog used older fingerprints and needs re-running."
-    ),
-)
-def detection_reflects_current_catalog(
-    clickhouse: ClickhouseResource,
-) -> dg.AssetCheckResult:
-    with clickhouse.get_connection() as client:
-        published = client.execute(
-            f"SELECT max(published_at) FROM `{RESOLVED_DATABASE}`."
-            f"`{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}`"
-        )
-        latest_publish = published[0][0] if published else None
-        detection_state = client.execute(
-            f"SELECT uniqExact(_partition_id), min(detected_at), max(detected_at) "
-            f"FROM `{RESOLVED_DATABASE}`."
-            f"`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
-        )
-        filled_partitions, oldest_build, newest_build = detection_state[0]
-        behind = 0
-        if latest_publish is not None:
-            behind = int(
-                client.execute(
-                    f"SELECT uniqExactIf(_partition_id, detected_at < %(cut)s) "
-                    f"FROM `{RESOLVED_DATABASE}`."
-                    f"`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`",
-                    {"cut": latest_publish},
-                )[0][0]
-            )
-
-    total = detection.DETECTION_PARTITION_COUNT
-    missing = total - int(filled_partitions)
-    if latest_publish is None:
-        # Nothing to compare against yet: the catalog has never published.
-        return dg.AssetCheckResult(
-            passed=True,
-            metadata={"note": "no technology_catalog publish recorded yet"},
-        )
-    passed = behind == 0 and missing == 0
-    return dg.AssetCheckResult(
-        passed=passed,
-        severity=dg.AssetCheckSeverity.WARN,
-        metadata={
-            "partitions_behind_catalog": behind,
-            "partitions_never_built": missing,
-            "filled_partitions": int(filled_partitions),
-            "latest_catalog_publish": str(latest_publish),
-            "oldest_partition_build": str(oldest_build),
-            "newest_partition_build": str(newest_build),
-        },
-    )
-
-
 @dg.asset(
     name="technology_adoption_clickhouse",
     deps=[
         dg.AssetKey("technology_catalog_clickhouse"),
-        dg.AssetKey("domain_signal_technologies_clickhouse"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
@@ -668,9 +405,6 @@ SELECT technology, uniqExact(root_domain), %(computed_at)s
 FROM (
     SELECT technology, root_domain
     FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
-    UNION ALL
-    SELECT technology, root_domain
-    FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
 )
 GROUP BY technology""",
                 {"computed_at": computed_at},
@@ -700,7 +434,6 @@ GROUP BY technology""",
     deps=[
         dg.AssetKey("se_company_domain_publish"),
         dg.AssetKey("technology_catalog_clickhouse"),
-        dg.AssetKey("domain_signal_technologies_clickhouse"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
@@ -738,12 +471,6 @@ FROM (
         WHERE root_domain IN (
             SELECT root_domain FROM `{RESOLVED_DATABASE}`.`se_company_domain_resolved` WHERE is_active = 1
         )
-        UNION ALL
-        SELECT technology, root_domain
-        FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
-        WHERE root_domain IN (
-            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`se_company_domain_resolved` WHERE is_active = 1
-        )
     )
 ) AS t
 INNER JOIN (
@@ -774,7 +501,6 @@ INNER JOIN (
     name="technology_top_domains_clickhouse",
     deps=[
         dg.AssetKey("technology_catalog_clickhouse"),
-        dg.AssetKey("domain_signal_technologies_clickhouse"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql"},
@@ -857,9 +583,6 @@ FROM (
     FROM (
         SELECT technology, root_domain
         FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
-        UNION ALL
-        SELECT technology, root_domain
-        FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
     )
     GROUP BY technology, root_domain
 ) AS pairs
@@ -907,16 +630,6 @@ technology_catalog_job = dg.define_asset_job(
     ),
 )
 
-# Separate job: a partitioned asset cannot share a job with unpartitioned
-# ones. Materialize buckets via a UI backfill (one-partition-per-run, the
-# domain_signal_detection pool serializes them); the weekly rollups read
-# whatever slices are current.
-domain_signal_technologies_job = dg.define_asset_job(
-    name="domain_signal_technologies_job",
-    selection=dg.AssetSelection.assets(domain_signal_technologies_clickhouse),
-    partitions_def=DETECTION_PARTITIONS,
-)
-
 # Sunday 05:20 UTC — staggered minute unused by any other source. STOPPED by
 # default per house pattern for new schedules; start it at instance level.
 technology_catalog_weekly = dg.ScheduleDefinition(
@@ -930,13 +643,11 @@ technology_catalog_weekly = dg.ScheduleDefinition(
 defs = dg.Definitions(
     assets=[
         technology_catalog_clickhouse,
-        domain_signal_technologies_clickhouse,
         technology_adoption_clickhouse,
         technology_companies_clickhouse,
         technology_top_domains_clickhouse,
     ],
-    asset_checks=[detection_reflects_current_catalog],
-    jobs=[technology_catalog_job, domain_signal_technologies_job],
+    jobs=[technology_catalog_job],
     schedules=[technology_catalog_weekly],
     resources={
         "technology_catalog_object_store": ObjectStoreResource(

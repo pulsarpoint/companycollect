@@ -23,7 +23,7 @@ from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE, assert_clickhouse_tables_exist
-from dagster_v3.defs.dns_detect import sql
+from dagster_v3.defs.dns_detect import intervals, sql
 from dagster_v3.defs.dns_detect.resource import DEFAULT_API_URL, DnsDetectResource
 
 GROUP_NAME = "dns_detect"
@@ -84,13 +84,35 @@ def _chunks(rows: Iterable, size: int) -> Iterator[list[dict]]:
         yield chunk
 
 
-def resolve_partition(reader, writer, service, bucket: int, log, *, chunk_size: int = CHUNK_SIZE, workers: int = WORKERS) -> dict:
+def read_watermark(reader, bucket: int):
+    """The bucket's newest load time. Params are passed (even empty) so the
+    driver renders the SQL's %% as %."""
+    return reader.execute(sql.watermark_sql(RESOLVED_DATABASE, bucket), {})[0][0]
+
+
+def selection_since(previous: dict | None, versions: dict) -> str | None:
+    """The watermark an incremental run may use, or None for a full selection:
+    only when the last successful run recorded one under the same knowledge
+    versions (a version change can make any record stale)."""
+    if not previous or not previous.get("watermark"):
+        return None
+    if previous.get("rules_version") != versions["rules_version"] or previous.get("ip_version") != versions["ip_version"]:
+        return None
+    return previous["watermark"]
+
+
+def resolve_partition(reader, writer, service, bucket: int, log, *, chunk_size: int = CHUNK_SIZE, workers: int = WORKERS,
+                      versions: dict | None = None, since: str | None = None) -> dict:
     """Stream the bucket's candidates through the service and store the
     answers. Results are inserted before resolutions, so a crash never marks a
-    record resolved without its results."""
-    versions = service.knowledge()
+    record resolved without its results. With since, only domains loaded after
+    that watermark are considered."""
+    versions = versions or service.knowledge()
     params = {"rules_version": versions["rules_version"], "ip_version": versions["ip_version"]}
-    rows = reader.execute_iter(sql.candidates_sql(RESOLVED_DATABASE, bucket), params, settings=READ_SETTINGS)
+    if since:
+        params["since"] = since
+    query = sql.candidates_sql(RESOLVED_DATABASE, bucket, incremental=since is not None)
+    rows = reader.execute_iter(query, params, settings=READ_SETTINGS)
     counts = {"records": 0, "results": 0, "findings": 0, "chunks": 0}
     insert_results = sql.insert_sql(RESOLVED_DATABASE, sql.SERVICES_TABLE, sql.SERVICE_COLUMNS)
     insert_resolutions = sql.insert_sql(RESOLVED_DATABASE, sql.RESOLUTIONS_TABLE, sql.RESOLUTION_COLUMNS)
@@ -144,14 +166,61 @@ def dns_record_services_clickhouse(
     assert_clickhouse_tables_exist(clickhouse, database=RESOLVED_DATABASE, tables=REQUIRED_TABLES)
     bucket = sql.partition_bucket(context.partition_key)
     started = datetime.now(UTC)
+    versions = dns_detect.knowledge()
+    since = selection_since(_previous_metadata(context), versions)
     with clickhouse.get_connection() as reader, clickhouse.get_connection() as writer:
-        counts = resolve_partition(reader, writer, dns_detect, bucket, context.log)
+        # Snapshot the watermark before selecting: anything loaded later is
+        # newer than it and is picked up by the next run.
+        latest = read_watermark(reader, bucket)
+        context.log.info("bucket %d: %s selection%s", bucket, "incremental" if since else "full", f" since {since}" if since else "")
+        counts = resolve_partition(reader, writer, dns_detect, bucket, context.log, versions=versions, since=since)
     seconds = (datetime.now(UTC) - started).total_seconds()
-    return dg.MaterializeResult(metadata={**counts, "seconds": round(seconds, 1),
-                                          "records_per_second": round(counts["records"] / seconds) if seconds else 0})
+    return dg.MaterializeResult(metadata={
+        **counts, "seconds": round(seconds, 1),
+        "records_per_second": round(counts["records"] / seconds) if seconds else 0,
+        "mode": "incremental" if since else "full",
+        "watermark": latest.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if latest else "",
+        "rules_version": versions["rules_version"], "ip_version": versions["ip_version"],
+    })
 
 
-dns_record_services_job = dg.define_asset_job(name=JOB_NAME, selection=dg.AssetSelection.assets(dns_record_services_clickhouse))
+def _previous_metadata(context: AssetExecutionContext) -> dict | None:
+    """Metadata of this partition's latest successful materialization."""
+    records = context.instance.fetch_materializations(
+        dg.AssetRecordsFilter(asset_key=context.asset_key, asset_partitions=[context.partition_key]), limit=1
+    ).records
+    if not records or records[0].asset_materialization is None:
+        return None
+    return {k: getattr(v, "value", v) for k, v in records[0].asset_materialization.metadata.items()}
+
+
+@dg.asset(
+    name="domain_service_intervals_clickhouse",
+    group_name=GROUP_NAME,
+    kinds={"clickhouse"},
+    partitions_def=PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    pool="dns_detect_intervals",
+    deps=[dns_record_services_clickhouse],
+    description=(
+        "Service usage periods per domain (corpscout.domain_service_intervals) and distinct domains per "
+        "provider and service type (corpscout.provider_service_counts), migration 000470. Rebuilt whole per "
+        "bucket from dns_record_services with the domain_services_history rules and swapped in by REPLACE PARTITION."
+    ),
+)
+def domain_service_intervals_clickhouse(context: AssetExecutionContext, clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=RESOLVED_DATABASE,
+                                   tables=(sql.RESOLUTIONS_TABLE, sql.SERVICES_TABLE, sql.INTERVALS_TABLE, sql.COUNTS_TABLE))
+    bucket = sql.partition_bucket(context.partition_key)
+    started = datetime.now(UTC)
+    with clickhouse.get_connection() as client:
+        counts = intervals.rebuild_bucket(client, RESOLVED_DATABASE, bucket, context.log)
+    return dg.MaterializeResult(metadata={**counts, "seconds": round((datetime.now(UTC) - started).total_seconds(), 1)})
+
+
+dns_record_services_job = dg.define_asset_job(
+    name=JOB_NAME, selection=dg.AssetSelection.assets(dns_record_services_clickhouse, domain_service_intervals_clickhouse)
+)
 
 _ACTIVE = [dg.DagsterRunStatus.QUEUED, dg.DagsterRunStatus.NOT_STARTED, dg.DagsterRunStatus.STARTING, dg.DagsterRunStatus.STARTED]
 
@@ -188,7 +257,7 @@ def dns_detect_knowledge_sensor(context: dg.SensorEvaluationContext, dns_detect:
 
 
 defs = dg.Definitions(
-    assets=[dns_record_services_clickhouse],
+    assets=[dns_record_services_clickhouse, domain_service_intervals_clickhouse],
     jobs=[dns_record_services_job],
     schedules=[dns_record_services_daily],
     sensors=[dns_detect_knowledge_sensor],

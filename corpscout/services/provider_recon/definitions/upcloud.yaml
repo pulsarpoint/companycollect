@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: upcloud
+display_name: "UpCloud"
+category: cdn
+website: https://upcloud.com/products/object-storage/
+aliases: ["UpCloud", "UpCloud Object Storage"]
+provider_keys: ["upcloudobjects.com"]
+services:
+  - key: upcloud.object-storage-cdn
+    display_name: "UpCloud Object Storage hosting"
+    service_types: [cdn]
+    note: "Ported from technology_fingerprints (UpCloud Object Storage)."
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "upcloudobjects.com"}

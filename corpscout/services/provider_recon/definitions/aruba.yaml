@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: aruba
+display_name: "Aruba.it"
+category: hosting
+website: https://www.aruba.it
+aliases: ["Aruba.it"]
+provider_keys: ["technorail.com"]
+services:
+  - key: aruba.it-dns
+    display_name: "Aruba.it DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Aruba.it)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "technorail.com"}

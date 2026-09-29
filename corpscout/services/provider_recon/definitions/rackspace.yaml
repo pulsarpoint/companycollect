@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: rackspace
+display_name: "Rackspace"
+category: hosting
+website: https://www.rackspace.com
+aliases: ["Rackspace"]
+provider_keys: ["rackspace.com"]
+services:
+  - key: rackspace.dns
+    display_name: "Rackspace DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Rackspace)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "rackspace.com"}

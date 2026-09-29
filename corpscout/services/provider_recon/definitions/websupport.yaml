@@ -4,10 +4,21 @@ display_name: Websupport
 category: hosting
 country: SE
 aliases: ["Websupport"]
-provider_keys: ["websupport.se"]
+provider_keys: ["websupport.se", "websupport.cz", "websupport.hu", "websupport.sk"]
 services:
   - key: websupport.email
     display_name: Websupport email
     service_types: [email]
     dns_rules:
       - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "websupport.se"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "websupport.cz"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "websupport.hu"}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "websupport.sk"}
+  - key: websupport.sending
+    display_name: "Websupport outbound mail"
+    service_types: [email_sending]
+    note: "Ported from technology_fingerprints (Websupport)."
+    dns_rules:
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.m1.websupport.cz"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.m1.websupport.hu"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.m1.websupport.sk"}

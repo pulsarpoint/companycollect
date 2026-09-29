@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: flexera
+display_name: "Flexera"
+category: saas
+website: https://www.flexera.com
+aliases: ["Flexera"]
+provider_keys: []
+services:
+  - key: flexera.verification
+    display_name: "Flexera domain verification"
+    service_types: [saas_verification]
+    note: "Ported from technology_fingerprints (Flexera)."
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "flexera-domain-verification-"}

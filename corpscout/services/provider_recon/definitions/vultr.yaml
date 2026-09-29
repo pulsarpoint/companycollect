@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schema.json
+slug: vultr
+display_name: "Vultr"
+category: cloud
+website: https://www.vultr.com
+aliases: ["Vultr"]
+provider_keys: ["vultr.com"]
+services:
+  - key: vultr.dns
+    display_name: "Vultr DNS"
+    service_types: [dns]
+    note: "Ported from technology_fingerprints (Vultr)."
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "vultr.com"}
