@@ -481,6 +481,7 @@ EXPECTED_MIGRATIONS = (
     "000467_corpscout_compact_domain_sources",
     "000468_corpscout_dns_detect",
     "000469_corpscout_domain_review_confidence",
+    "000470_corpscout_domain_service_intervals",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4624,3 +4625,15 @@ def test_dns_detect_migration_defines_tables_and_history_views() -> None:
     # No deletes anywhere: results are versioned, never mutated.
     assert "DELETE" not in up.upper().replace("DELETED", "")
 
+
+
+def test_domain_service_intervals_migration_defines_both_tables() -> None:
+    up = (MIGRATIONS_DIR / "000470_corpscout_domain_service_intervals.up.sql").read_text()
+    down = (MIGRATIONS_DIR / "000470_corpscout_domain_service_intervals.down.sql").read_text()
+    assert "CREATE TABLE IF NOT EXISTS corpscout.domain_service_intervals" in up
+    assert "ORDER BY (provider_slug, service_type, root_domain, first_seen)" in up
+    assert "CREATE TABLE IF NOT EXISTS corpscout.provider_service_counts" in up
+    assert "ORDER BY (provider_slug, provider_key, service_type)" in up
+    assert up.count("PARTITION BY bucket") == 2
+    assert "DROP TABLE IF EXISTS corpscout.domain_service_intervals" in down
+    assert "DROP TABLE IF EXISTS corpscout.provider_service_counts" in down
