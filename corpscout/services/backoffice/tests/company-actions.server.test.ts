@@ -89,7 +89,7 @@ describe("company action dispatch", () => {
     ["addresses", "process", "se_company_address_refresh_job", 7],
     ["people", "sync", "se_company_person_sync_job", 6],
     ["people", "process", "se_company_person_refresh_job", 8],
-    ["domains", "sync", "se_company_domain_sync_job", 4],
+    ["domains", "sync", "se_company_domain_sync_job", 5],
     ["domains", "process", "se_company_domain_refresh_job", 6],
   ] as const)("launches %s / %s as one complete global job", async (area, operation, job, stepCount) => {
     const opts = options();

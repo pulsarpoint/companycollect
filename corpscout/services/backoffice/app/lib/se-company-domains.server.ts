@@ -16,6 +16,7 @@ export interface SeCompanyDomainRow {
   source_urls: string[];
   confidence_bases: string[];
   suggested_confidence: number;
+  confidence_override?: number | null;
   suggested_primary: number;
   review_status: string;
   review_note: string;
@@ -52,6 +53,7 @@ export const COMPANY_DOMAINS_SQL = `SELECT
   d.source_urls AS source_urls,
   d.confidence_bases AS confidence_bases,
   toFloat64(d.suggested_confidence) AS suggested_confidence,
+  d.confidence_override AS confidence_override,
   toUInt8(d.suggested_primary) AS suggested_primary,
   toString(d.review_status) AS review_status,
   d.review_note AS review_note,

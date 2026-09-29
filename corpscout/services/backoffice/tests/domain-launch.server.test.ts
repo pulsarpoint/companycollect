@@ -1,29 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { launchDomainAction } from "~/lib/domain-launch.server";
-import { listDomainPrompts } from "~/lib/domain-prompts.server";
-vi.mock("~/lib/llm-settings.server", () => ({
-  getLlmProfile: async (id: string) => id === "test-profile" ? ({profileId: "test-profile",revision:1,state:"enabled",provider:"openrouter",model:"chosen/model",baseUrl:"https://openrouter.ai/api/v1"}) : null,
-  getLlmProfileApiKey: async () => "secret-must-not-travel",
-}));
-vi.mock("~/lib/llm-runs.server", () => ({admitLlmRun: async () => null, acknowledgeLlmRun: async () => {}}));
-
-let directory: string;
-let databasePath: string;
-let input: Parameters<typeof launchDomainAction>[0];
-beforeEach(() => {
-  vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
-  directory = mkdtempSync(join(tmpdir(), "domain-launch-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = "test-profile";
-  const [prompt] = listDomainPrompts(databasePath);
-  input = { operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, verifyDomains: true, requestedBy: "operator" };
-});
-afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 function options() {
-  return { url: "http://dagster:3000/graphql", databasePath, fetchImpl: vi.fn(async () => new Response(JSON.stringify({ data: { launchRun: { __typename: "LaunchRunSuccess", run: { runId: "domain-run", status: "QUEUED" } } } }))) };
+  return { url: "http://dagster:3000/graphql", fetchImpl: vi.fn(async () => new Response(JSON.stringify({ data: { launchRun: { __typename: "LaunchRunSuccess", run: { runId: "domain-run", status: "QUEUED" } } } }))) };
 }
 function submitted(opts: ReturnType<typeof options>) {
   const call = opts.fetchImpl.mock.calls[0] as unknown as [unknown, RequestInit];
@@ -31,43 +10,27 @@ function submitted(opts: ReturnType<typeof options>) {
 }
 
 describe("domain processing launch", () => {
-  it("sends the saved model, prompt and reuse flag without a verification cutoff", async () => {
+  it.each(["sync", "process"])("%s publishes source claims without an LLM verification step", async (operation) => {
     const opts = options();
-    await launchDomainAction(input, opts);
+    await launchDomainAction({ operation, changedOnly: true, requestedBy: "operator" }, opts);
     const execution = submitted(opts);
-    expect(execution.selector.jobName).toBe("se_company_domain_refresh_job");
-    expect(execution.runConfigData.ops.se_company_domain_suggestions_brave.config).toEqual({ execute: true, page_size: 5_000 });
-    expect(execution.runConfigData.ops.se_company_domain_suggestions_crawler_lookup.config).toEqual({ execute: true, page_size: 5_000 });
-    expect(execution.runConfigData.ops.se_company_domain_verification.config).toMatchObject({
-      changed_only: true,
-      verification: { provider: "openrouter", model: "chosen/model", api_key_encrypted: expect.stringMatching(/^v1\./), system_prompt: listDomainPrompts(databasePath)[0].systemPrompt },
-    });
-    expect(execution.runConfigData.ops.se_company_domain_publish.config.verification)
-      .toEqual(execution.runConfigData.ops.se_company_domain_verification.config.verification);
-    expect(execution.runConfigData.ops.se_company_domain_verification.config.verification).not.toHaveProperty("max_tokens");
-    expect(execution.runConfigData.ops.se_company_domain_verification.config).not.toHaveProperty("max_llm_calls");
-    expect(execution.runConfigData.ops.se_company_domain_publish.config).not.toHaveProperty("max_llm_calls");
-    expect(execution.executionMetadata.tags).toContainEqual({ key: "corpscout/verification_scope", value: "uncertain_or_conflicting" });
-    expect(JSON.stringify(execution)).not.toContain("company_ids");
-  });
-  it.each(["sync", "process"])("%s can run without any LLM settings when verification is disabled", async (operation) => {
-    const opts = options();
-    await launchDomainAction({ ...input, operation, verifyDomains: false, profileId: "", promptId: "" }, opts);
-    const execution = submitted(opts);
-    expect(JSON.stringify(execution)).not.toContain("system_prompt");
-    expect(JSON.stringify(execution)).not.toContain("api_key_environment_variable");
-    if (operation === "sync") {
-      expect(execution.runConfigData.ops).not.toHaveProperty("se_company_domain_publish");
-      expect(execution.runConfigData.ops).not.toHaveProperty("se_company_domain_verification");
+    expect(execution.selector.jobName).toBe(operation === "process" ? "se_company_domain_refresh_job" : "se_company_domain_sync_job");
+    const ops = execution.runConfigData.ops;
+    for (const source of ["brave", "wikidata", "esef_filing", "common_crawl_identity", "crawler_lookup"]) {
+      expect(ops[`se_company_domain_suggestions_${source}`].config).toEqual({ execute: true, page_size: 5_000 });
+    }
+    expect(ops).not.toHaveProperty("se_company_domain_verification");
+    if (operation === "process") {
+      expect(ops.se_company_domain_publish.config).toEqual({changed_only: true, page_size: 1_000});
     } else {
-      expect(execution.runConfigData.ops.se_company_domain_verification.config).not.toHaveProperty("verification");
+      expect(ops).not.toHaveProperty("se_company_domain_publish");
     }
+    expect(JSON.stringify(execution)).not.toMatch(/api_key|system_prompt|profile_id|verification_scope/);
+    expect(execution.executionMetadata.tags).toContainEqual({key: "corpscout/requested_by", value: "operator"});
   });
-  it("rejects stale prompts and missing model or prompt before submission", async () => {
+  it.each([{operation: "unknown", requestedBy: "operator"}, {operation: "process", requestedBy: ""}])("rejects invalid operation or operator before submission", async (input) => {
     const opts = options();
-    for (const change of [{ promptRevision: 999 }, { profileId: "missing" }, { promptId: "missing" }]) {
-      await expect(launchDomainAction({ ...input, ...change }, opts)).rejects.toThrow();
-    }
+    await expect(launchDomainAction({...input, changedOnly: true}, opts)).rejects.toThrow();
     expect(opts.fetchImpl).not.toHaveBeenCalled();
   });
 });

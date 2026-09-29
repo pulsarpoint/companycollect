@@ -19,7 +19,6 @@ export function CompanyActionDialog({ profiles, prompts, selected, disabled, onC
   profiles: Pick<LlmProfile, "profileId" | "name" | "provider" | "model" | "isActive">[];
   prompts: PeoplePrompt[];
 }) {
-  const [verifyDomains, setVerifyDomains] = useState(true);
   const [changedOnly, setChangedOnly] = useState(true);
   const [profileId, setProfileId] = useState(profiles.find((p) => p.isActive)?.profileId ?? profiles[0]?.profileId ?? "");
   const [promptId, setPromptId] = useState(prompts[0]?.promptId ?? "");
@@ -29,8 +28,8 @@ export function CompanyActionDialog({ profiles, prompts, selected, disabled, onC
   const area = COMPANY_ACTION_AREAS.find((entry) => entry.value === selected?.area);
   const fullProcessing = selected?.operation === "process";
   const processesDomains = fullProcessing && selected.area === "domains";
-  const needsModel = fullProcessing && (selected.area === "info" || selected.area === "people" || (processesDomains && verifyDomains));
-  const needsPrompt = fullProcessing && (selected.area === "people" || (processesDomains && verifyDomains));
+  const needsModel = fullProcessing && (selected.area === "info" || selected.area === "people");
+  const needsPrompt = fullProcessing && selected.area === "people";
   const operationLabel = fullProcessing ? "Full processing" : "Sync inputs";
 
   const handledRun = useRef<string | undefined>(undefined);
@@ -51,14 +50,7 @@ export function CompanyActionDialog({ profiles, prompts, selected, disabled, onC
           <input type="hidden" name="area" value={selected.area} />
           <input type="hidden" name="operation" value={selected.operation} />
           <p className="text-sm text-muted-foreground">{area[selected.operation]}</p>
-          {processesDomains && <>
-            <input type="hidden" name="verify_domains" value={String(verifyDomains)} />
-            <Field orientation="horizontal" data-disabled={busy}>
-              <Checkbox id="company-action-verify-domains" checked={verifyDomains} onCheckedChange={setVerifyDomains} disabled={busy} />
-              <FieldContent><FieldLabel htmlFor="company-action-verify-domains">Verify uncertain or conflicting associations</FieldLabel>
-                <FieldDescription>{verifyDomains ? "Check all eligible associations across all companies. Use the LLM only when source evidence is inconclusive or conflicts. Strong source claims and reviewer decisions do not need a call." : "Use source precedence and existing verifications. Unresolved associations remain unpublished."}</FieldDescription></FieldContent>
-            </Field>
-          </>}
+          {processesDomains && <p className="text-sm text-muted-foreground">Source claims publish directly. Manual rejections and confidence overrides are preserved. No LLM verification runs.</p>}
           {needsModel && <FieldGroup>
             {needsModel && <Field data-disabled={busy}>
               <div className="flex justify-between"><FieldLabel htmlFor="company-action-llm">LLM profile</FieldLabel><Link to="/admin/settings/llms" className="text-xs underline">Manage LLMs</Link></div>
@@ -74,7 +66,7 @@ export function CompanyActionDialog({ profiles, prompts, selected, disabled, onC
             </Field>}
             {needsPrompt && <>
               <Field data-disabled={busy}>
-                <div className="flex justify-between"><FieldLabel htmlFor="company-action-prompt">{processesDomains ? "Domain prompt" : "People prompt"}</FieldLabel><Link to={processesDomains ? "/admin/settings/domain-prompts" : "/admin/settings/people-prompts"} className="text-xs underline">Manage prompts</Link></div>
+                <div className="flex justify-between"><FieldLabel htmlFor="company-action-prompt">People prompt</FieldLabel><Link to="/admin/settings/people-prompts" className="text-xs underline">Manage prompts</Link></div>
                 <NativeSelect id="company-action-prompt" name="prompt_id" value={promptId} onChange={(e) => setPromptId(e.target.value)} className="w-full" required disabled={busy}>
                   <NativeSelectOption value="" disabled>Choose a prompt</NativeSelectOption>
                   {prompts.map((p) => <NativeSelectOption key={p.promptId} value={p.promptId}>{p.name} · revision {p.revision}</NativeSelectOption>)}
@@ -88,9 +80,9 @@ export function CompanyActionDialog({ profiles, prompts, selected, disabled, onC
               <Field orientation="horizontal" data-disabled={busy}>
                 <Checkbox id="company-action-changed-only" checked={changedOnly} onCheckedChange={setChangedOnly} aria-describedby="company-action-changed-only-description" disabled={busy} />
                 <FieldContent>
-                  <FieldLabel htmlFor="company-action-changed-only">{processesDomains ? "Only verify new or changed input" : "Only match new or changed input"}</FieldLabel>
+                  <FieldLabel htmlFor="company-action-changed-only">Only match new or changed input</FieldLabel>
                   <FieldDescription id="company-action-changed-only-description">{changedOnly
-                    ? processesDomains ? "Reuse saved results when company identity, domain evidence, prompt and model are unchanged." : "Reuse saved results when people, prompt, and model are unchanged."
+                    ? "Reuse saved results when people, prompt, and model are unchanged."
                     : "Call the LLM again for eligible inputs, including unchanged evidence. This incurs new LLM usage."}</FieldDescription>
                 </FieldContent>
               </Field>

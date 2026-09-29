@@ -42,6 +42,10 @@ export async function action({ params, request }: Route.ActionArgs) {
       rootDomain: String(form.get("root_domain") ?? ""),
       reviewStatus: reviewStatus as CompanyDomainReviewStatus,
       reviewedBy: process.env.COMPANY_DOMAIN_REVIEWER?.trim() ?? "",
+      ...(form.has("note") ? { note: String(form.get("note")) } : {}),
+      ...(form.has("confidence_override") ? {
+        confidenceOverride: String(form.get("confidence_override")).trim() === "" ? null : Number(form.get("confidence_override")),
+      } : {}),
     });
     return { ok: true as const };
   } catch (error) {

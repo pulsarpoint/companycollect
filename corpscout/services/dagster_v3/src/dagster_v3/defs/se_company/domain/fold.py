@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.evidence import digest, domain_evidence, json_text, requires_verification
 from dagster_v3.defs.se_company.domain.precedence import DOMAIN_PRECEDENCE
 
-FOLD_VERSION = "domain-fold-v3-source-references"
+FOLD_VERSION = "domain-fold-v4-review-confidence"
 LLM_THRESHOLD = 0.9
 COMPARE_COLUMNS = tuple(c for c in tables.MAIN_COLUMNS if c not in (
     "folded_at", "fold_version", "source_run_id", "last_seen_at", "fold_input_hash",
@@ -107,12 +107,13 @@ def fold_company(
         confirmed = decision is not None and decision["action"] in ("confirmed_primary", "confirmed_related")
         row["active"] = int(row["association"] == "connected" and (bool(candidates) or confirmed))
         row["inactive_reason"] = "" if row["active"] else "rejected" if row["association"] == "not_connected" else "withdrawn" if not candidates else "unverified"
+        confidence_override = decision.get("confidence_override") if decision is not None else None
         primary_scores[domain] = (
             not ((decision is not None and decision["action"] == "confirmed_primary") or (decision is None and reviewer_primary)),
             -len(supporting_sources),
             -effective_rank("primary", strongest["source"], domain, precedence) if strongest else 0,
             primary is None,
-            -row["confidence"], domain,
+            -(confidence_override if confidence_override is not None else row["confidence"]), domain,
         )
         row["primary_source"] = "reviewer" if (confirmed and decision["action"] == "confirmed_primary") or (decision is None and reviewer_primary) else strongest["source"] if strongest else row["association_source"]
         output.append(row)

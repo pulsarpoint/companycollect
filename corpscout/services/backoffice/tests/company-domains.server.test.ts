@@ -28,6 +28,7 @@ const row = {
   source_urls: ["https://wikidata.org/wiki/Q123", "https://filing.example"],
   confidence_bases: ["official_website_claim", "repeated_filing_website"],
   suggested_confidence: 1,
+  confidence_override: null as number | null,
   suggested_primary: 1,
   evidence_fingerprint: "a".repeat(64),
   review_status: "unreviewed",
@@ -266,6 +267,36 @@ describe("unified company domains", () => {
     await expect(recordCompanyDomainReview({ domains, rootDomain: row.root_domain,
       reviewStatus: "rejected" })).rejects.toThrow("one Swedish company");
     expect(clickhouse.rules).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 0.65, 1, null])("edits confidence without releasing a rejection (%s)", async (confidenceOverride) => {
+    mockDomainQueries([{ ...row, review_status: "rejected", confidence_override: 0.4, review_note: "Different legal entity" }]);
+    const domains = await getUnifiedCompanyDomains("SE", row.company_id);
+    await recordCompanyDomainReview({domains, rootDomain: row.root_domain, reviewStatus: "rejected", confidenceOverride});
+    expect(clickhouse.rules).toHaveBeenCalledWith([expect.objectContaining({
+      action: "rejected", removed: 0, confidence_override: confidenceOverride, note: "Different legal entity",
+    })]);
+    expect(domains[0].sources.map((source) => source.confidence)).toEqual([1, 0.9]);
+  });
+  it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid confidence %s", async (confidenceOverride) => {
+    mockDomainQueries([row]);
+    const domains = await getUnifiedCompanyDomains("SE", row.company_id);
+    await expect(recordCompanyDomainReview({domains, rootDomain: row.root_domain, reviewStatus: "unreviewed", confidenceOverride})).rejects.toThrow("between 0 and 1");
+    expect(clickhouse.rules).not.toHaveBeenCalled();
+  });
+  it("keeps a zero override active without confirming the association", async () => {
+    mockDomainQueries([row]);
+    const domains = await getUnifiedCompanyDomains("SE", row.company_id);
+    await recordCompanyDomainReview({domains, rootDomain: row.root_domain, reviewStatus: "unreviewed", confidenceOverride: 0});
+    expect(clickhouse.rules).toHaveBeenCalledWith([expect.objectContaining({action: "unreviewed", removed: 0, confidence_override: 0})]);
+  });
+  it("preserves the override on rejection, and releases it only on clear review", async () => {
+    mockDomainQueries([{...row, confidence_override: 0.3}]);
+    const domains = await getUnifiedCompanyDomains("SE", row.company_id);
+    await recordCompanyDomainReview({domains, rootDomain: row.root_domain, reviewStatus: "rejected"});
+    expect(clickhouse.rules).toHaveBeenLastCalledWith([expect.objectContaining({action: "rejected", removed: 0, confidence_override: 0.3})]);
+    await recordCompanyDomainReview({domains, rootDomain: row.root_domain, reviewStatus: "unreviewed"});
+    expect(clickhouse.rules).toHaveBeenLastCalledWith([expect.objectContaining({action: "unreviewed", removed: 1, confidence_override: null})]);
   });
 
 });

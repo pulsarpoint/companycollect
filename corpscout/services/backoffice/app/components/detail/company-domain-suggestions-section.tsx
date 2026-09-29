@@ -1,18 +1,13 @@
+import { DomainReviewControls } from "~/components/domain-suggestions/domain-review-controls";
 import { DomainSourceSupport, DOMAIN_RANKING_EXPLANATION } from "~/components/domain-suggestions/domain-source-support";
 import {
   Archive,
   CalendarClock,
-  CheckCircle2,
   ExternalLink,
   FileSearch,
-  Link2,
-  LoaderCircle,
-  RotateCcw,
   SearchX,
-  XCircle,
 } from "lucide-react";
-import { Link, useFetcher } from "react-router";
-import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -46,8 +41,6 @@ import type {
   CompanyDomainSource,
   WikidataDomainEvidence,
 } from "~/lib/company-domains.server";
-
-type ReviewActionData = { ok: true } | { ok: false; error: string };
 
 const percent = new Intl.NumberFormat("en-US", {
   style: "percent",
@@ -96,7 +89,7 @@ function reviewBadgeVariant(
 
 function sourceBasisDescription(source: CompanyDomainSource): string {
   if (source.name === "brave") {
-    return "Domain mentioned in the saved Brave answer. The full answer is passed to verification because it can include unrelated alternatives.";
+    return "Domain mentioned in the saved Brave answer. The answer can include unrelated alternatives; inspect its evidence before confirming the association.";
   }
   if (source.name === "common_crawl_identity") {
     const matches = source.evidence.filter(
@@ -401,94 +394,6 @@ function SourceEvidenceCard({ source }: { source: CompanyDomainSource }) {
   );
 }
 
-function ReviewControls({
-  domain,
-  action,
-}: {
-  domain: CompanyDomain;
-  action: string;
-}) {
-  const fetcher = useFetcher<ReviewActionData>();
-  const submitting = fetcher.state !== "idle";
-
-  return (
-    <div className="flex flex-col gap-3">
-      <fetcher.Form
-        method="post"
-        action={action}
-        className="flex flex-wrap gap-2"
-      >
-        <input type="hidden" name="root_domain" value={domain.rootDomain} />
-        <Button
-          type="submit"
-          name="review_status"
-          value="confirmed_primary"
-          size="sm"
-          variant={
-            domain.reviewStatus === "confirmed_primary" ? "default" : "outline"
-          }
-          disabled={submitting || domain.reviewStatus === "confirmed_primary"}
-        >
-          {submitting ? (
-            <LoaderCircle data-icon="inline-start" className="animate-spin" />
-          ) : (
-            <CheckCircle2 data-icon="inline-start" />
-          )}
-          Confirm primary
-        </Button>
-        <Button
-          type="submit"
-          name="review_status"
-          value="confirmed_related"
-          size="sm"
-          variant={
-            domain.reviewStatus === "confirmed_related"
-              ? "secondary"
-              : "outline"
-          }
-          disabled={submitting || domain.reviewStatus === "confirmed_related"}
-        >
-          <Link2 data-icon="inline-start" />
-          Confirm related
-        </Button>
-        <Button
-          type="submit"
-          name="review_status"
-          value="rejected"
-          size="sm"
-          variant={
-            domain.reviewStatus === "rejected" ? "destructive" : "outline"
-          }
-          disabled={submitting || domain.reviewStatus === "rejected"}
-        >
-          <XCircle data-icon="inline-start" />
-          Reject
-        </Button>
-        {domain.reviewStatus !== "unreviewed" ? (
-          <Button
-            type="submit"
-            name="review_status"
-            value="unreviewed"
-            size="sm"
-            variant="ghost"
-            disabled={submitting}
-          >
-            <RotateCcw data-icon="inline-start" />
-            Clear review
-          </Button>
-        ) : null}
-      </fetcher.Form>
-
-      {fetcher.data && !fetcher.data.ok ? (
-        <Alert variant="destructive">
-          <AlertTitle>Review was not saved</AlertTitle>
-          <AlertDescription>{fetcher.data.error}</AlertDescription>
-        </Alert>
-      ) : null}
-    </div>
-  );
-}
-
 function DomainCard({
   domain,
   reviewAction,
@@ -531,7 +436,7 @@ function DomainCard({
             {reviewLabels[domain.reviewStatus]}
           </Badge>
           <Badge variant="outline">
-            {percent.format(domain.suggestedConfidence)} suggested confidence
+            {percent.format(domain.suggestedConfidence)} {domain.confidenceOverride != null ? "manual confidence" : "suggested confidence"}
           </Badge>
           {domain.evidenceChanged ? (
             <Badge variant="destructive">Source evidence changed</Badge>
@@ -554,7 +459,7 @@ function DomainCard({
             />
           ))}
         </div>
-        <ReviewControls domain={domain} action={reviewAction} />
+        <DomainReviewControls rootDomain={domain.rootDomain} reviewStatus={domain.reviewStatus} confidenceOverride={domain.confidenceOverride} action={reviewAction} />
       </CardContent>
       <CardFooter className="justify-between gap-3">
         <span className="text-muted-foreground text-xs">

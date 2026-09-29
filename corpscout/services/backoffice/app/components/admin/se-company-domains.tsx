@@ -1,3 +1,5 @@
+import { DomainReviewControls } from "~/components/domain-suggestions/domain-review-controls";
+import type { CompanyDomainReviewStatus } from "~/lib/company-domains.server";
 import { DomainSourceSupport } from "~/components/domain-suggestions/domain-source-support";
 import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import { SeDomainRelationships } from "~/components/admin/se-domain-relationships";
@@ -33,7 +35,7 @@ function confidencePercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function DomainCard({ row }: { row: SeCompanyDomainRow }) {
+function DomainCard({ row, companyId }: { row: SeCompanyDomainRow; companyId: string }) {
   const unverified = !row.is_active && row.review_status !== "rejected" && row.inactive_reason === "unverified";
   // The four source arrays are parallel by construction (one entry per source
   // that evidenced this domain), so they are zipped rather than listed apart.
@@ -60,7 +62,7 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
           </Badge>
           {unverified ? <Badge variant="outline">Unverified</Badge> : row.is_active ? null : <Badge variant="outline">inactive</Badge>}
           <Badge variant="outline">
-            {row.association === "not_connected" ? "rejection confidence" : row.verification_status === "success" ? "assessment confidence" : "source score"}{" "}
+            {row.confidence_override != null ? "manual confidence" : row.association === "not_connected" ? "rejection confidence" : row.verification_status === "success" ? "assessment confidence" : "source score"}{" "}
             {confidencePercent(row.suggested_confidence)}
           </Badge>
         </div>
@@ -133,6 +135,8 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
             ["Resolved at", text(row.resolved_at)],
           ]}
         />
+        <DomainReviewControls rootDomain={row.root_domain} reviewStatus={row.review_status as CompanyDomainReviewStatus}
+          confidenceOverride={row.confidence_override} action={`/company/se/${companyId}/suggestions`} />
       </CardContent>
     </Card>
   );
@@ -186,7 +190,7 @@ export function SeCompanyDomainsTab({
       <CompanySourceStrip
         sources={domains.flatMap((row) => row.source_names)}
       />
-      <p className="text-muted-foreground text-sm">Domains reported by sources such as Brave appear here before verification. Unverified domains still count as company domains. Primary marks the preferred website.</p>
+      <p className="text-muted-foreground text-sm">Source proposals publish directly with their evidence. Rejected pairs stay in review history and cannot be restored by later source submissions. Primary marks the preferred website.</p>
       <div className="text-sm">
         <Link
           className="underline underline-offset-2"
@@ -197,7 +201,7 @@ export function SeCompanyDomainsTab({
       </div>
       <h2 className="text-lg font-medium">Company domains</h2>
       {currentDomains.map((row) => (
-        <DomainCard key={row.root_domain} row={row} />
+        <DomainCard key={row.root_domain} row={row} companyId={companyId} />
       ))}
       {currentDomains.length === 0 ? <p className="text-sm text-muted-foreground">No current company domains recorded.</p> : null}
       <SeDomainRelationships relationships={relationships} />
@@ -207,7 +211,7 @@ export function SeCompanyDomainsTab({
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-4 pt-4">
           <p className="text-sm text-muted-foreground">These domains were considered as company websites. Their mentions may still describe useful connections.</p>
-          {historyDomains.map((row) => <DomainCard key={row.root_domain} row={row} />)}
+          {historyDomains.map((row) => <DomainCard key={row.root_domain} row={row} companyId={companyId} />)}
         </CollapsibleContent>
       </Collapsible> : null}
     </section>

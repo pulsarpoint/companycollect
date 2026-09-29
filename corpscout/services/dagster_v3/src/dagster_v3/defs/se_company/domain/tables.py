@@ -35,7 +35,7 @@ MAIN_COLUMNS = (
 )
 HISTORY_COLUMNS = (*MAIN_COLUMNS, "changed_fields", "changed_at", "change_kind", "fold_run_id")
 PRECEDENCE_COLUMNS = ("company_id", "root_domain", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at")
-RULE_COLUMNS = ("company_id", "root_domain", "action", "removed", "decided_by", "note", "evidence_hash", "decided_at")
+RULE_COLUMNS = ("company_id", "root_domain", "action", "removed", "decided_by", "note", "evidence_hash", "decided_at", "confidence_override")
 VERIFICATION_COLUMNS = (
     "company_id", "root_domain", "input_hash", "data_hash", "prompt_hash", "model_hash",
     "input_json", "system_prompt", "status", "verdict", "confidence", "reason", "evidence_ids", "provider", "model",

@@ -173,7 +173,9 @@ describe("CompanyDomainSuggestionsSection", () => {
 
     expect(html).toContain("Confirmed primary");
     expect(html).toContain("Confirm related");
-    expect(html).toContain("Reject");
+    expect(html).toContain("Doesn’t belong");
+    expect(html).toContain("until you clear the review");
+    expect(html).toContain('name="confidence_override"');
     expect(html).toContain("Clear review");
     expect(html).toContain('name="root_domain" value="acme-security.se"');
   });

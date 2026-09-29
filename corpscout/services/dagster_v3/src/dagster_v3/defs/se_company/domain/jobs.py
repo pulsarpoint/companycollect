@@ -12,7 +12,7 @@ se_company_domain_sync_job = dg.define_asset_job(
 )
 se_company_domain_refresh_job = dg.define_asset_job(
     "se_company_domain_refresh_job",
-    selection=dg.AssetSelection.assets(*SYNC_ASSETS, "se_company_domain_verification", "se_company_domain_publish", "domains_sources", "domains_company_filter"),
+    selection=dg.AssetSelection.assets(*SYNC_ASSETS, "se_company_domain_publish", "domains_sources", "domains_company_filter"),
     config={"ops": {"domains_sources": {"config": {"source_tables": ["se_company_domain"]}}}},
-    description="Sync domain evidence, optionally verify uncertain or conflicting associations, and fold all companies with change history.",
+    description="Publish saved source claims and reviewer decisions with change history. Verification is an independent optional asset and is never run by this job.",
 )

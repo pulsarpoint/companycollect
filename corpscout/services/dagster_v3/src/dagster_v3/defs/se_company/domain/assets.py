@@ -85,7 +85,7 @@ def se_company_domain_verification(
 
 @dg.asset(
     group_name=tables.GROUP_NAME, kinds={"clickhouse", "python"}, pool=PUBLISH_POOL,
-    deps=["se_company_domain_verification"],
+    deps=[*tables.EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse"],
     description="Fold Swedish company domains from source suggestions, precedence, reviewer decisions and stored current-input LLM verdicts. Ensure the central domain before writing the country association. A separate domains_sources asset derives table contributions afterward. Append change history before publication. This step never calls an LLM.",
 )
 def se_company_domain_publish(

@@ -39,7 +39,7 @@ def fold(rows, previous=(), rules=(), precedence=(), verified=None):
 
 def rule(action, domain="example.se", **changes):
     return dict(company_id=COMPANY["company_id"], root_domain=domain, action=action, removed=0,
-                decided_by="reviewer", note="Checked identity", evidence_hash="reviewed", decided_at=STAMP) | changes
+                decided_by="reviewer", note="Checked identity", evidence_hash="reviewed", decided_at=STAMP, confidence_override=None) | changes
 
 
 def verified(verdict="connected", **changes):
@@ -224,7 +224,7 @@ def test_batch_cap_and_reviewer_decisions_never_spend_unnecessary_calls(monkeypa
     assert all('"domain":"a.se"' not in call["messages"][1]["content"] for call in model.calls)
 
 
-def test_two_domain_jobs_include_global_sync_and_optional_verification_config():
+def test_domain_publication_depends_directly_on_sources_and_never_runs_verification():
     from dagster_clickhouse import ClickhouseResource
     from dagster_v3.defs.domains.assets import domains_company_filter, domains_sources
     from dagster_v3.defs.se_company.domain import assets, brave, common_crawl, crawler_lookup, esef, jobs, wikidata
@@ -240,15 +240,14 @@ def test_two_domain_jobs_include_global_sync_and_optional_verification_config():
     process = repo.get_job("se_company_domain_refresh_job")
     expected = {*tables.EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse"}
     assert {key.to_user_string() for key in sync.asset_layer.executable_asset_keys} == expected
-    assert {key.to_user_string() for key in process.asset_layer.executable_asset_keys} == {*expected, "se_company_domain_verification", "se_company_domain_publish", "domains_sources", "domains_company_filter"}
+    assert {key.to_user_string() for key in process.asset_layer.executable_asset_keys} == {*expected, "se_company_domain_publish", "domains_sources", "domains_company_filter"}
     assert repo.asset_graph.get(dg.AssetKey("se_company_domain_publish")).pools == {"domains_publish"}
     config = {"ops": {name: {"config": {"execute": True}} for name in tables.EXTRACTOR_ASSETS}}
     dg.validate_run_config(sync, config)
     resolved_config = dg.validate_run_config(process, config)
     assert resolved_config["ops"]["domains_sources"]["config"]["source_tables"] == ["se_company_domain"]
     assert repo.asset_graph.get(dg.AssetKey("se_company_domain_verification")).pools == {"se_company_domain_fold"}
-    assert assets.se_company_domain_publish.dependency_keys == {dg.AssetKey("se_company_domain_verification")}
-    config["ops"]["se_company_domain_verification"] = {"config": {"verification": PROFILE.model_dump(), "max_llm_calls": 10}}
+    assert assets.se_company_domain_publish.dependency_keys == {dg.AssetKey(name) for name in expected}
     config["ops"]["se_company_domain_publish"] = {"config": {"verification": PROFILE.model_dump()}}
     dg.validate_run_config(process, config)
 
@@ -328,7 +327,7 @@ def test_verification_failure_is_saved_and_retry_resumes_without_repeating_succe
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_dagster_verification_step_persists_scores_before_publication(monkeypatch, fail):
+def test_standalone_verification_preserves_answers_and_cannot_block_later_publication(monkeypatch, fail):
     from contextlib import nullcontext
     from dagster_clickhouse import ClickhouseResource
     from dagster_v3.defs.se_company.domain import assets
@@ -345,11 +344,9 @@ def test_dagster_verification_step_persists_scores_before_publication(monkeypatc
     monkeypatch.setattr(assets, "verify_domains", lambda *args, **kwargs: batch.verify_domains(
         *args, **kwargs, llm_factory=lambda *args, **kwargs: model))
     external = assets.se_company_domain_verification.dependency_keys
-    config = {"ops": {name: {"config": {"verification": PROFILE.model_dump()}} for name in (
-        "se_company_domain_verification", "se_company_domain_publish")}}
+    config = {"ops": {"se_company_domain_verification": {"config": {"verification": PROFILE.model_dump()}}}}
     result = dg.materialize(
-        [assets.se_company_domain_verification, assets.se_company_domain_publish,
-         *(dg.AssetSpec(key) for key in external)], run_config=config,
+        [assets.se_company_domain_verification, *(dg.AssetSpec(key) for key in external)], run_config=config,
         resources={"clickhouse": ClickhouseResource(host="localhost", user="test", password="", database="test")},
         raise_on_error=False,
     )
@@ -362,10 +359,19 @@ def test_dagster_verification_step_persists_scores_before_publication(monkeypatc
         assert not result.asset_materializations_for_node("se_company_domain_publish")
     else:
         assert len(model.calls) == 1
-        assert client.data[tables.MAIN_TABLE][0]["active"] == 1
+        assert not client.data[tables.MAIN_TABLE]
         metadata = result.asset_materializations_for_node("se_company_domain_verification")[0].metadata
         assert metadata["score_column"].value == "confidence"
         assert metadata["llm_calls"].value == 1
+
+    published = dg.materialize(
+        [assets.se_company_domain_publish, *(dg.AssetSpec(key) for key in external)],
+        run_config={"ops": {"se_company_domain_publish": {"config": {"verification": PROFILE.model_dump()}}}},
+        resources={"clickhouse": ClickhouseResource(host="localhost", user="test", password="", database="test")},
+    )
+    assert published.success
+    assert client.data[tables.MAIN_TABLE][0]["active"] == int(not fail)
+    assert len(client.data[tables.VERIFICATION_TABLE]) == 1
 
 
 @pytest.mark.parametrize("wrap", [
@@ -656,3 +662,24 @@ def test_withdrawn_negative_and_disabled_sources_do_not_count_as_support():
     assert result[0]['supporting_sources'] == ['brave']
     assert not result[0]['active']
     assert not result[0]['is_primary']
+
+
+def test_rejected_pair_stays_rejected_after_changed_sources_and_reappearance():
+    sources = [suggestion(), suggestion("brave")]
+    rejection = rule("rejected")
+    previous, _ = fold(sources, rules=[rejection])
+    withdrawn, _ = fold([], previous=previous, rules=[rejection])
+    updated = [row | {"evidence": "New strong evidence", "confidence": 1.0} for row in sources]
+    rows, _ = fold(updated, previous=withdrawn, rules=[rejection], verified={"example.se": verified()})
+    assert rows[0]["review_status"] == "rejected" and rows[0]["active"] == 0
+    assert rows[0]["sources"] == ["brave", "wikidata"]
+    assert rows[0]["source_confidences"] == [1.0, 1.0]
+    restored, _ = fold(updated, previous=rows, rules=[rule("unreviewed", removed=1)])
+    assert restored[0]["active"] == 1
+
+
+def test_zero_confidence_override_affects_primary_tie_without_overwriting_source_scores():
+    sources = [suggestion(domain="a.se"), suggestion(domain="b.se")]
+    rows, _ = fold(sources, rules=[rule("unreviewed", domain="a.se", confidence_override=0)])
+    assert {row["root_domain"]: row["is_primary"] for row in rows} == {"a.se": 0, "b.se": 1}
+    assert all(row["confidence"] == .95 and row["source_confidences"] == [.95] for row in rows)

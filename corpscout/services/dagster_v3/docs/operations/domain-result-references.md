@@ -333,3 +333,45 @@ Additional focused rollout checks passed: identity tests (20), crawler batch tes
 (13, one opt-in skip), country-claim tests (7), restored DNS tests (19), Dagster definition
 validation and whitespace checks. Actual production table/reference/projection audits and
 service-health checks passed after activation.
+
+
+## Direct source publication and persistent review (2026-09-29)
+
+`se_company_domain_refresh_job` runs the five source adapters, precedence and
+publication, then refreshes the source index and company filter. Publication depends
+directly on the adapters and no longer waits for `se_company_domain_verification`.
+That optional asset remains available independently, including its saved paid answers;
+ordinary Backoffice domain processing does not select a model or call it. Existing
+confidence and conflicting-evidence policies still distinguish proposals from accepted
+associations. A fresh independent verification is followed by a separate publication.
+
+`se_company_domain_rule` owns company/domain review decisions. `action='rejected'`
+with `removed=0` means “Doesn’t belong” until an operator clears or changes the review.
+A source withdrawal, changed evidence, a different source, or a higher source score
+cannot release this rejection. Clearing a rule uses `removed=1`; source-level `removed`
+continues to mean only that source has withdrawn its claim.
+
+Migration 469 adds nullable `confidence_override` to the review rule. NULL uses the
+calculated score; zero is a valid explicit score. The resolved view applies the override
+without overwriting source confidence/evidence, and exposes derived `is_removed` for
+rejected pairs. `domains_company_filter` excludes those pairs. Other companies on the
+same domain remain counted, and central domain/source memberships remain intact.
+Backoffice applies review rules immediately and requests a filter refresh; the filter
+changes when that refresh finishes. Rejections remain visible in review history.
+
+Apply migration 469 before deploying the publisher's new rule projection. It is additive,
+so old explicit-column writers and active crawls can continue. Hot-sync Dagster definitions;
+no crawler or Brave restart is required. Do not reuse an old refresh-run configuration
+containing a `se_company_domain_verification` op; start domain processing from Backoffice
+or select the standalone verification asset explicitly.
+
+
+Deployment verified: migration ledger `469, dirty=0`; first filter refresh succeeded.
+Dagster hot-sync completed without restarting its supervisor. The deployed publisher
+has the five source adapters plus precedence as its six dependencies; verification is
+only in the standalone asset job. Existing crawler run
+`b31a1682-d644-4ad6-b65d-6ebe60d10c83` and Brave run
+`a6911a12-aac6-4d66-a457-28d225b97b2b` remained STARTED. Read-only browser inspection
+confirmed the controls on Addtech's Domains tab. No company review was changed during
+production validation. Local validation: 200 Python/ClickHouse tests and 100 Backoffice
+tests passed, plus TypeScript and Dagster definition checks.

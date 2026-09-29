@@ -64,6 +64,7 @@ export interface CompanyDomain {
   sources: CompanyDomainSource[];
   supportingSources: string[];
   suggestedConfidence: number;
+  confidenceOverride?: number | null;
   suggestedPrimary: boolean;
   evidenceFingerprint: string;
   reviewStatus: CompanyDomainReviewStatus;
@@ -113,6 +114,7 @@ interface CompanyDomainRow {
   source_urls: string[];
   confidence_bases: string[];
   suggested_confidence: number | string;
+  confidence_override: number | string | null;
   suggested_primary: number | string;
   evidence_fingerprint: string;
   review_status: string;
@@ -180,6 +182,7 @@ interface RecordCompanyDomainReviewInput {
   note?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+  confidenceOverride?: number | null;
 }
 
 export class CompanyDomainReviewValidationError extends Error {}
@@ -197,6 +200,7 @@ export const COMPANY_DOMAINS_QUERY = `SELECT
   source_urls,
   confidence_bases,
   suggested_confidence,
+  confidence_override,
   suggested_primary,
   evidence_fingerprint,
   review_status,
@@ -537,6 +541,7 @@ function domainFromRow(
       return { ...source, evidence };
     }),
     suggestedConfidence: Number(row.suggested_confidence),
+    confidenceOverride: row.confidence_override == null ? null : Number(row.confidence_override),
     suggestedPrimary: Boolean(Number(row.suggested_primary)),
     evidenceFingerprint: row.evidence_fingerprint,
     reviewStatus: row.review_status as CompanyDomainReviewStatus,
@@ -615,6 +620,7 @@ export const COMPANY_DOMAIN_REVIEW_QUEUE_QUERY = `SELECT
   domains.source_urls AS source_urls,
   domains.confidence_bases AS confidence_bases,
   domains.suggested_confidence AS suggested_confidence,
+  domains.confidence_override AS confidence_override,
   domains.suggested_primary AS suggested_primary,
   domains.evidence_fingerprint AS evidence_fingerprint,
   domains.review_status AS review_status,
@@ -703,12 +709,14 @@ function reviewRule(
   note: string,
   decidedBy: string,
   decidedAt: string,
+  confidenceOverride: number | null,
 ) {
   return {
     company_id: domain.companyId,
     root_domain: domain.rootDomain,
     action,
-    removed: action === "unreviewed" ? 1 : 0,
+    removed: action === "unreviewed" && confidenceOverride === null ? 1 : 0,
+    confidence_override: confidenceOverride,
     decided_by: decidedBy,
     note,
     evidence_hash: domain.evidenceFingerprint,
@@ -748,7 +756,7 @@ export async function recordCompanyDomainReview(
   )) {
     throw new CompanyDomainReviewValidationError("Domain reviews require one Swedish company.");
   }
-  const note = input.note?.trim() ?? "";
+  const note = input.note?.trim() ?? (input.reviewStatus === "unreviewed" && input.confidenceOverride === undefined ? "" : domain.reviewNote);
   const reviewedBy = input.reviewedBy?.trim() ?? "";
   if (note.length > 2_000) {
     throw new CompanyDomainReviewValidationError(
@@ -760,9 +768,15 @@ export async function recordCompanyDomainReview(
       "The reviewer identifier is too long.",
     );
   }
+  const confidenceOverride = input.confidenceOverride === undefined
+    ? input.reviewStatus === "unreviewed" ? null : domain.confidenceOverride ?? null
+    : input.confidenceOverride;
+  if (confidenceOverride !== null && (!Number.isFinite(confidenceOverride) || confidenceOverride < 0 || confidenceOverride > 1)) {
+    throw new CompanyDomainReviewValidationError("Confidence must be a number between 0 and 1.");
+  }
   const reviewedAt = clickHouseTimestamp(input.reviewedAt);
   const rows = [
-    reviewRule(domain, input.reviewStatus, note, reviewedBy, reviewedAt),
+    reviewRule(domain, input.reviewStatus, note, reviewedBy, reviewedAt, confidenceOverride),
   ];
   if (input.reviewStatus === "confirmed_primary") {
     for (const sibling of input.domains) {
@@ -777,6 +791,7 @@ export async function recordCompanyDomainReview(
             sibling.reviewNote,
             reviewedBy,
             reviewedAt,
+            sibling.confidenceOverride ?? null,
           ),
         );
       }

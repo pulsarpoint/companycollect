@@ -480,6 +480,7 @@ EXPECTED_MIGRATIONS = (
     "000466_corpscout_domain_result_references",
     "000467_corpscout_compact_domain_sources",
     "000468_corpscout_dns_detect",
+    "000469_corpscout_domain_review_confidence",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -968,7 +969,7 @@ def test_clickhouse_migrations_have_down_files() -> None:
                 assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
             continue
 
-        if migration_file in {"000436_corpscout_webtech_pages", "000437_corpscout_webtech_page_current_lookup", "000440_corpscout_retire_registry_domain_aggregates", "000441_corpscout_domains_inventory", "000461_corpscout_se_domain_readers", "000462_corpscout_domains_sources", "000463_corpscout_domain_source_readers", "000464_corpscout_remove_company_domains", "000466_corpscout_domain_result_references", "000467_corpscout_compact_domain_sources"}:
+        if migration_file in {"000436_corpscout_webtech_pages", "000437_corpscout_webtech_page_current_lookup", "000440_corpscout_retire_registry_domain_aggregates", "000441_corpscout_domains_inventory", "000461_corpscout_se_domain_readers", "000462_corpscout_domains_sources", "000463_corpscout_domain_source_readers", "000464_corpscout_remove_company_domains", "000466_corpscout_domain_result_references", "000467_corpscout_compact_domain_sources", "000469_corpscout_domain_review_confidence"}:
             assert "SELECT throwIf(1," in sql
             assert "DROP TABLE" not in sql
             continue

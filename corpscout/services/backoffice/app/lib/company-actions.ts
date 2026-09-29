@@ -32,7 +32,7 @@ export const COMPANY_ACTION_AREAS = [
     description: "Company websites and domain associations",
     jobs: { sync: "se_company_domain_sync_job", process: "se_company_domain_refresh_job" },
     sync: "Sync domain evidence from saved Brave answers, ingested Wikidata, ESEF filings and Common Crawl matches, plus source precedence. No crawling, LLM calls or publishing.",
-    process: "Sync domain evidence, resolve associations using source precedence, then publish with change history. Optionally verify uncertain or conflicting associations with the selected LLM and Domain prompt. Reviewer decisions take priority.",
+    process: "Sync domain evidence, resolve associations using source precedence, then publish with change history. No LLM verification is required. Persistent reviewer rejections and confidence overrides take priority over later source submissions.",
   },
 ] as const;
 

@@ -8,7 +8,7 @@ import { ACTIVE_COMPANY_RUN_STATUSES, COMPANY_ACTION_AREAS, type CompanyActionRe
 
 interface CompanyActionInput {
   area: string; operation: string; profileId: string; promptId: string;
-  promptRevision: number; changedOnly: boolean; llmMaxCompanies: number; requestedBy: string; verifyDomains?: boolean;
+  promptRevision: number; changedOnly: boolean; llmMaxCompanies: number; requestedBy: string;
 }
 
 // The backoffice runs as one server. Hold this lock across the Dagster lookup
