@@ -45,9 +45,9 @@ import {
   IP_LIST_FILTER_KEYS,
   parseWorkspaceIpFilters,
   workspaceIpAddressesHref,
-  workspaceIpListOrder,
 } from "~/lib/workspace-ip-addresses";
 import {
+  ipSearchTableBuilt,
   listWorkspaceIpAddresses,
   type WorkspaceIpStatistics,
 } from "~/lib/workspace-ip-addresses.server";
@@ -130,7 +130,12 @@ export async function loader({ request }: Route.LoaderArgs) {
     listWorkspaceIpAddresses(filters, params.get("after") ?? ""),
     ipFilterLabels(filters),
   ]);
-  return { ...list, filters, labels };
+  // An empty page on a never-built table says so instead of "no matches".
+  const notBuilt =
+    list.rows.length === 0 && !list.hasMore
+      ? !(await ipSearchTableBuilt().catch(() => true))
+      : false;
+  return { ...list, filters, labels, notBuilt };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -182,7 +187,8 @@ export function meta() {
 export default function WorkspaceIpAddresses({
   loaderData,
 }: Route.ComponentProps) {
-  const { rows, filters, labels, after, next, hasMore } = loaderData;
+  const { rows, filters, labels, after, next, hasMore, order, notBuilt } =
+    loaderData;
   type SelectionState = {
     filterKey: string;
     selection: WorkspaceIpSelection;
@@ -260,9 +266,11 @@ export default function WorkspaceIpAddresses({
           All IPv4 and IPv6 addresses observed by our DNS and zone-transfer
           scanners. Each address appears once, including historical records and
           addresses without enrichment.{" "}
-          {workspaceIpListOrder(filters) === "location"
+          {order === "location"
             ? "Sorted by country, region and city."
-            : "Sorted by ASN (addresses without an ASN first)."}
+            : order === "inventory"
+              ? "Sorted by address hash bucket, then address."
+              : "Sorted by ASN (addresses without an ASN first)."}
         </p>
       </header>
       <IpStatistics />
@@ -489,12 +497,24 @@ export default function WorkspaceIpAddresses({
               <TableRow>
                 <TableCell colSpan={8}>
                   <Empty>
-                    <EmptyHeader>
-                      <EmptyTitle>No matching IP addresses</EmptyTitle>
-                      <EmptyDescription>
-                        Try a different address or prefix, or reset the filters.
-                      </EmptyDescription>
-                    </EmptyHeader>
+                    {notBuilt ? (
+                      <EmptyHeader>
+                        <EmptyTitle>Search table not built yet</EmptyTitle>
+                        <EmptyDescription>
+                          <code>corpscout.ip_enrichment_search</code> fills after
+                          its first refresh (daily at 03:00 UTC, or on request
+                          with <code>SYSTEM REFRESH VIEW</code>).
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    ) : (
+                      <EmptyHeader>
+                        <EmptyTitle>No matching IP addresses</EmptyTitle>
+                        <EmptyDescription>
+                          Try a different address or prefix, or reset the
+                          filters.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    )}
                   </Empty>
                 </TableCell>
               </TableRow>

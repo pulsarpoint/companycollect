@@ -5,7 +5,7 @@ import {
   type WorkspaceIpFilters,
 } from "~/lib/workspace-ip-addresses";
 
-/** One row per inventory IP with its current enrichment (migration 000470). A
+/** One row per inventory IP with its current enrichment (migration 000471). A
  * refreshable view rebuilds it daily and after every IP enrichment task. */
 export const IP_SEARCH_RELATION = "corpscout.ip_enrichment_search";
 
@@ -103,9 +103,22 @@ export async function getWorkspaceIpStatistics(): Promise<WorkspaceIpStatistics>
   }
 }
 
+/** Whether the search table has ever been built (an EMPTY-created view is empty
+ * until its first refresh). Asked only when a page comes back empty. */
+export async function ipSearchTableBuilt(): Promise<boolean> {
+  const [row] = await chQuery<{ built: number }>(
+    `SELECT toUInt8(last_success_time IS NOT NULL) AS built FROM system.view_refreshes
+     WHERE database = 'corpscout' AND view = 'ip_enrichment_search'`,
+  );
+  return Boolean(row?.built);
+}
+
 type Cursor =
   | { order: "asn"; key: [number, number, string] }
-  | { order: "location"; key: [string, string, string, number, string] };
+  | { order: "location"; key: [string, string, string, number, string] }
+  | { order: "inventory"; key: [number, number, string] };
+
+export type WorkspaceIpOrder = Cursor["order"];
 
 function isBucket(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 0 && Number(value) < 256;
@@ -133,6 +146,15 @@ function decodeCursor(after: string, order: Cursor["order"]): Cursor | null {
     )
       return { order, key: [key[0], key[1], key[2]] };
     if (
+      order === "inventory" &&
+      key.length === 3 &&
+      isBucket(key[0]) &&
+      (key[1] === 4 || key[1] === 6) &&
+      typeof key[2] === "string" &&
+      isIP(key[2]) === key[1]
+    )
+      return { order, key: [key[0], key[1], key[2]] };
+    if (
       order === "location" &&
       key.length === 5 &&
       isShortString(key[0]) &&
@@ -149,11 +171,16 @@ function decodeCursor(after: string, order: Cursor["order"]): Cursor | null {
   return null;
 }
 
-function encodeCursor(order: Cursor["order"], row: SearchRow): string {
+function encodeCursor(
+  order: Cursor["order"],
+  row: Pick<SearchRow, "bucket" | "ip_version" | "ip"> & Partial<SearchRow>,
+): string {
   const key =
-    order === "asn"
-      ? [row.asn, row.bucket, row.ip]
-      : [
+    order === "inventory"
+      ? [row.bucket, row.ip_version, row.ip]
+      : order === "asn"
+        ? [row.asn, row.bucket, row.ip]
+        : [
           row.country_iso_code,
           row.subdivision_iso_code,
           row.city_name,
@@ -239,6 +266,123 @@ function emptyToNull(value: string): string | null {
   return value === "" ? null : value;
 }
 
+function toAddress(row: SearchRow): WorkspaceIpAddress {
+  return {
+    bucket: row.bucket,
+    ip_version: row.ip_version,
+    ip: row.ip,
+    first_seen: row.first_seen,
+    last_seen: row.last_seen,
+    country_iso_code: emptyToNull(row.country_iso_code),
+    city_name: emptyToNull(row.city_name),
+    asn: row.asn === 0 ? null : row.asn,
+    asn_organization: emptyToNull(row.asn_organization),
+    rdap_matched_cidr: emptyToNull(row.rdap_matched_cidr),
+    rdap_name: emptyToNull(row.rdap_name),
+  };
+}
+
+const SEARCH_COLUMNS = `bucket, ip_version, ip, toString(first_seen) AS first_seen,
+       toString(last_seen) AS last_seen, asn, asn_organization, country_iso_code,
+       subdivision_iso_code, city_name, rdap_matched_cidr, rdap_name`;
+
+/** A literal IP prefix with no ASN or location filter: the search table's sort
+ * keys cannot narrow it (asn or country leads them), the inventory's can. */
+export function workspaceIpOrder(filters: WorkspaceIpFilters): WorkspaceIpOrder {
+  return filters.search &&
+    !isIP(filters.search) &&
+    filters.asn.length === 0 &&
+    filters.country.length === 0
+    ? "inventory"
+    : workspaceIpListOrder(filters);
+}
+
+interface IpKey {
+  bucket: number;
+  ip_version: 4 | 6;
+  ip: string;
+}
+
+/**
+ * Prefix pages: the matching keys come from commoncrawl_ip_addresses, whose sort
+ * key (bucket, ip_version, ip) narrows a prefix inside each bucket (eight bucket
+ * branches per query, walked until a page is full), then the rows are read from
+ * the search table by (bucket, ip) with its ip_bloom index. Keys the snapshot
+ * does not hold yet (observed after its last rebuild) are left out of the page;
+ * they appear after the next rebuild, like everywhere else in this list.
+ */
+async function listByInventoryPrefix(
+  filters: WorkspaceIpFilters,
+  cursor: Extract<Cursor, { order: "inventory" }> | null,
+) {
+  const params: Record<string, unknown> = {
+    search: filters.search,
+    prefixEnd:
+      filters.search.slice(0, -1) +
+      String.fromCharCode(filters.search.charCodeAt(filters.search.length - 1) + 1),
+  };
+  const conditions = ["ip >= {search:String}", "ip < {prefixEnd:String}"];
+  if (filters.version !== "any") {
+    conditions.push("ip_version = {version:UInt8}");
+    params.version = Number(filters.version);
+  } else {
+    conditions.push("ip_version IN (4, 6)");
+  }
+  if (cursor) {
+    conditions.push(
+      keysetAfter([
+        ["bucket", "{afterBucket:UInt16}"],
+        ["ip_version", "{afterVersion:UInt8}"],
+        ["ip", "{afterIp:String}"],
+      ]),
+    );
+    [params.afterBucket, params.afterVersion, params.afterIp] = cursor.key;
+  }
+  const branch = (bucket: number) =>
+    `(SELECT DISTINCT bucket, ip_version, ip FROM corpscout.commoncrawl_ip_addresses
+      WHERE bucket = ${bucket} AND ${conditions.join(" AND ")}
+      ORDER BY bucket, ip_version, ip LIMIT {limit:UInt32})`;
+  const keys: IpKey[] = [];
+  for (
+    let bucket = cursor?.key[0] ?? 0;
+    bucket < 256 && keys.length < PAGE_SIZE + 1;
+    bucket += 8
+  ) {
+    const branches = Array.from({ length: Math.min(8, 256 - bucket) }, (_, i) =>
+      branch(bucket + i),
+    );
+    keys.push(
+      ...(await chQuery<IpKey>(
+        `SELECT bucket, ip_version, ip FROM (${branches.join(" UNION ALL ")})
+         ORDER BY bucket, ip_version, ip LIMIT {limit:UInt32}
+         ${QUERY_SETTINGS}, optimize_distinct_in_order=1`,
+        { ...params, limit: PAGE_SIZE + 1 - keys.length },
+      )),
+    );
+  }
+  const page = keys.slice(0, PAGE_SIZE);
+  const found = page.length
+    ? await chQuery<SearchRow>(
+        `SELECT ${SEARCH_COLUMNS} FROM ${IP_SEARCH_RELATION}
+         WHERE bucket IN {buckets:Array(UInt16)} AND ip IN {ips:Array(String)}
+         ${QUERY_SETTINGS}`,
+        {
+          buckets: [...new Set(page.map((key) => key.bucket))],
+          ips: page.map((key) => key.ip),
+        },
+      )
+    : [];
+  const byIp = new Map(found.map((row) => [row.ip, row]));
+  return {
+    rows: page.flatMap((key) => {
+      const row = byIp.get(key.ip);
+      return row ? [toAddress(row)] : [];
+    }),
+    hasMore: keys.length > PAGE_SIZE,
+    next: page.length ? encodeCursor("inventory", page[page.length - 1]) : "",
+  };
+}
+
 export async function listWorkspaceIpAddresses(
   filters: WorkspaceIpFilters,
   after = "",
@@ -252,9 +396,21 @@ export async function listWorkspaceIpAddresses(
       hasMore: false,
       next: "",
       after: "",
+      order: workspaceIpListOrder(filters) as WorkspaceIpOrder,
     };
   }
-  const order = workspaceIpListOrder(filters);
+  const order = workspaceIpOrder(filters);
+  if (order === "inventory") {
+    const cursor = decodeCursor(after, order);
+    return {
+      ...(await listByInventoryPrefix(
+        filters,
+        cursor?.order === "inventory" ? cursor : null,
+      )),
+      after: cursor ? after : "",
+      order,
+    };
+  }
   const cursor = decodeCursor(after, order);
   const { conditions, params } = workspaceIpConditions(filters);
   params.limit = PAGE_SIZE + 1;
@@ -288,9 +444,7 @@ export async function listWorkspaceIpAddresses(
   // Keyset over a key order ClickHouse reads in order: the sort key
   // (asn, bucket, ip), or the by_location projection for location filters.
   const rows = await chQuery<SearchRow>(
-    `SELECT bucket, ip_version, ip, toString(first_seen) AS first_seen,
-       toString(last_seen) AS last_seen, asn, asn_organization, country_iso_code,
-       subdivision_iso_code, city_name, rdap_matched_cidr, rdap_name
+    `SELECT ${SEARCH_COLUMNS}
      FROM ${IP_SEARCH_RELATION}
      ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
      ORDER BY ${ORDER_KEYS[order]} LIMIT {limit:UInt32} ${QUERY_SETTINGS}`,
@@ -298,23 +452,10 @@ export async function listWorkspaceIpAddresses(
   );
   const page = rows.slice(0, PAGE_SIZE);
   return {
-    rows: page.map(
-      (row): WorkspaceIpAddress => ({
-        bucket: row.bucket,
-        ip_version: row.ip_version,
-        ip: row.ip,
-        first_seen: row.first_seen,
-        last_seen: row.last_seen,
-        country_iso_code: emptyToNull(row.country_iso_code),
-        city_name: emptyToNull(row.city_name),
-        asn: row.asn === 0 ? null : row.asn,
-        asn_organization: emptyToNull(row.asn_organization),
-        rdap_matched_cidr: emptyToNull(row.rdap_matched_cidr),
-        rdap_name: emptyToNull(row.rdap_name),
-      }),
-    ),
+    rows: page.map(toAddress),
     hasMore: rows.length > PAGE_SIZE,
     next: page.length ? encodeCursor(order, page[page.length - 1]) : "",
     after: cursor ? after : "",
+    order,
   };
 }

@@ -159,7 +159,10 @@ function FacetPicker({
                     <span className="flex-1 truncate" title={option.label}>
                       {option.label || "—"}
                     </span>
-                    <span className="text-muted-foreground text-xs tabular-nums">
+                    <span
+                      className="text-muted-foreground text-xs tabular-nums"
+                      title="Addresses in total, not narrowed by the other filters"
+                    >
                       {nf.format(option.count)}
                     </span>
                   </CommandItem>
@@ -237,6 +240,9 @@ export function IpAddressFilterFields({
       {filters.version !== "any" ? (
         <input type="hidden" name="version" value={filters.version} />
       ) : null}
+      <FieldDescription>
+        Counts are addresses in total, not narrowed by the other filters.
+      </FieldDescription>
       <FacetPicker
         name="asn"
         kind="asn"
@@ -312,7 +318,7 @@ export function IpAddressFilterSheet({
         workspaceIpAddressesHref(withoutFilterValue(filters, chip))
       }
       title="Filter IP addresses"
-      description="Filter by ASN or organization, country, and, within one country, region or city. Counts are addresses in the search table. Filters can be bookmarked or shared; Select all matching uses them too."
+      description="Filter by ASN or organization, country, and, within one country, region or city. Picker counts are addresses in total. Filters can be bookmarked or shared; Select all matching uses them too."
     >
       <IpAddressFilterFields filters={filters} labels={labels} />
     </ListFilterSheet>
