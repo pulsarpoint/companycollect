@@ -50,6 +50,7 @@ from dagster_v3.defs.ip_enrichment.input import (
     RESULT_RELATION,
     bucket_prefix,
 )
+from dagster_v3.defs.ip_enrichment.search import request_search_refresh
 
 LOOKUP_STATUSES = ("city_lookup_status", "asn_lookup_status", "rdap_lookup_status")
 # Page size, pipeline bounds, request budgets, pacing, pauses and proxies are transport:
@@ -615,7 +616,17 @@ def ip_enrichment_results(
                 allow_retries=False,
             )
         task = finish_ip_execution(store, client, task)
-        return dg.MaterializeResult(metadata={**metadata, **complete(store, task)})
+        completion = complete(store, task)
+        # The backoffice list and the queue selection read the search table: ask for a
+        # rebuild with these results, without waiting and without failing the run.
+        refresh_requested = request_search_refresh(client, context.log)
+        return dg.MaterializeResult(
+            metadata={
+                **metadata,
+                **completion,
+                "search_refresh_requested": refresh_requested,
+            }
+        )
 
 
 # dagster.yaml retries failed runs twice, and dg.Failure(allow_retries=False) only bypasses

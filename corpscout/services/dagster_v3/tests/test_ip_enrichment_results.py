@@ -397,6 +397,8 @@ def test_draft_geoip_rdap_segments_completion_and_purge(environment):
     ) == [(2,)]
     metadata = outcome(first)
     assert metadata["completion_status"] == "completed"
+    # This server has no ip_enrichment_search view: the refresh request is a warning only.
+    assert metadata["search_refresh_requested"] is False
     assert (
         metadata["written"],
         metadata["succeeded_pages"],
