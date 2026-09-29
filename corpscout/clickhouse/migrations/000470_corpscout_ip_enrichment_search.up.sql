@@ -22,11 +22,14 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- substring searches on the organization name (LIKE '%text%' with 3 or more characters,
 -- which a tokenbf index cannot prune).
 --
--- Memory: both inputs are aggregated in primary-key order (a streaming GROUP BY, bounded by
--- a block instead of 49M keys) and joined with grace_hash, which keeps one hash partition
--- in memory and spills the rest. Created EMPTY: the first build (tens of minutes to hours
--- on a busy host) is started after deploy with SYSTEM REFRESH VIEW, never inside this
--- migration (the migrate client's read_timeout is 300 s).
+-- Memory: both inputs are aggregated in primary-key order (a streaming GROUP BY whose
+-- memory is a few small blocks of states, max_block_size 8192, instead of 49M keys) and
+-- joined with grace_hash, which keeps one hash partition of at most 256 MiB in memory and
+-- spills the rest to disk. Measured read-only on prod 2026-09-29: 168 MiB for one bucket,
+-- 218 MiB for two. max_memory_usage stops a runaway build at 6 GiB. Created EMPTY: the
+-- first build (tens of minutes on a busy host) is started after deploy with
+-- SYSTEM REFRESH VIEW, never inside this migration (the migrate client's read_timeout is
+-- 300 s).
 CREATE MATERIALIZED VIEW IF NOT EXISTS corpscout.ip_enrichment_search
 REFRESH EVERY 1 DAY OFFSET 3 HOUR
 (
@@ -130,7 +133,7 @@ LEFT JOIN
     FROM corpscout.ip_enrichment_results
     GROUP BY bucket, ip
 ) AS e ON e.bucket = i.bucket AND e.ip = i.ip
-SETTINGS max_threads = 4, optimize_aggregation_in_order = 1,
-    join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32,
-    max_bytes_in_join = 1073741824, max_bytes_before_external_group_by = 1073741824,
+SETTINGS max_threads = 4, optimize_aggregation_in_order = 1, max_block_size = 8192,
+    join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 8,
+    max_bytes_in_join = 268435456, max_bytes_before_external_group_by = 1073741824,
     max_memory_usage = 6442450944, max_execution_time = 0;
