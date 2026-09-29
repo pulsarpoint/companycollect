@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/admin-domain-services";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
@@ -12,8 +13,15 @@ import {
 } from "~/lib/domain-services";
 import { getDomainServices } from "~/lib/domain-services.server";
 
-export function loader({ params }: Route.LoaderArgs) {
-  return getDomainServices(params.domain.trim().toLowerCase());
+type LoaderData = DomainServices & { error?: string };
+
+export async function loader({ params }: Route.LoaderArgs): Promise<LoaderData> {
+  const domain = params.domain.trim().toLowerCase();
+  try {
+    return await getDomainServices(domain);
+  } catch (error) {
+    return { domain, resolved: false, intervals: [], evidence: [], error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function providerDomainsHref(slug: string) {
@@ -52,8 +60,16 @@ function Evidence({ rows }: { rows: ServiceEvidence[] }) {
   );
 }
 
-export default function DomainServicesPage({ loaderData }: { loaderData: DomainServices }) {
-  const { resolved, intervals, evidence } = loaderData;
+export default function DomainServicesPage({ loaderData }: { loaderData: LoaderData }) {
+  const { resolved, intervals, evidence, error } = loaderData;
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Could not load services</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  }
   if (!resolved) {
     return <p className="text-muted-foreground text-sm">This domain has not been resolved yet.</p>;
   }

@@ -6,7 +6,9 @@ vi.mock("~/lib/clickhouse.server", () => ({ chQuery: ch.query }));
 import { groupCurrent, parseProviderDomainsFilter, type ServiceInterval } from "~/lib/domain-services";
 import { getDomainServices, getProviderDomains, getProviderSummaries, getUnmappedKeys } from "~/lib/domain-services.server";
 
-beforeEach(() => ch.query.mockReset());
+beforeEach(() => {
+  ch.query.mockReset();
+});
 
 const iv = (o: Partial<ServiceInterval>): ServiceInterval => ({
   serviceType: "dns", providerKey: "loopia", providerSlug: "loopia", serviceKeys: [], firstSeen: "2025-01-01",
@@ -72,13 +74,61 @@ describe("domain services queries", () => {
   });
 
   it("clamps a provider domains page past the end to the last page", async () => {
-    ch.query
-      .mockResolvedValueOnce([{ total: "120" }])                       // count
-      .mockResolvedValueOnce([{ root_domain: "x.se", service_types: ["dns"], service_keys: [], first_seen: "2025-01-01", last_seen: "2026-09-01", is_current: 1 }])
-      .mockResolvedValueOnce([])                                       // by type
-      .mockResolvedValueOnce([]);                                      // by service
+    ch.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM corpscout.provider_service_counts")) return [{ service_type: "", now: "120", ever: "150" }];
+      return [];
+    });
     const out = await getProviderDomains("ionos", { serviceType: "", service: "", now: true, page: 99 });
     expect(out.page).toBe(3);
-    expect(ch.query.mock.calls[1][1]).toMatchObject({ slug: "ionos", offset: 100, limit: 50 });
+    const pageCall = ch.query.mock.calls.find(([sql]) => sql.includes("SELECT DISTINCT root_domain"));
+    expect(pageCall?.[1]).toMatchObject({ slug: "ionos", offset: 100, limit: 50 });
+  });
+});
+
+describe("review fixes", () => {
+  function dispatch(handlers: [string, unknown[]][]) {
+    ch.query.mockImplementation(async (sql: string) => {
+      for (const [needle, rows] of handlers) if (sql.includes(needle)) return rows;
+      throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
+    });
+  }
+
+  it("takes per-type counts and the unfiltered total from provider_service_counts and aggregates only the page's domains", async () => {
+    dispatch([
+      ["FROM corpscout.provider_service_counts", [
+        { service_type: "", now: "120", ever: "150" },
+        { service_type: "dns", now: "100", ever: "130" },
+      ]],
+      ["SELECT DISTINCT root_domain", [{ root_domain: "a.se" }, { root_domain: "b.se" }]],
+      ["root_domain IN {domains:Array(String)}", [
+        { root_domain: "a.se", service_types: ["dns"], service_keys: [], first_seen: "2025-01-01", last_seen: "2026-09-01", is_current: 1 },
+      ]],
+      ["ARRAY JOIN service_keys", []],
+    ]);
+    const out = await getProviderDomains("ionos", { serviceType: "", service: "", now: true, page: 1 });
+    expect(out.total).toBe(120);
+    expect(out.byType).toEqual({ dns: { now: 100, ever: 130 } });
+    const pageCall = ch.query.mock.calls.find(([sql]) => sql.includes("root_domain IN {domains:Array(String)}"));
+    expect(pageCall?.[1]).toMatchObject({ domains: ["a.se", "b.se"] });
+    expect(ch.query.mock.calls.some(([sql]) => sql.includes("uniqExact(root_domain) AS total"))).toBe(false);
+  });
+
+  it("counts the total over intervals only when a service filter applies", async () => {
+    dispatch([
+      ["FROM corpscout.provider_service_counts", []],
+      ["uniqExact(root_domain) AS total", [{ total: "7" }]],
+      ["SELECT DISTINCT root_domain", []],
+      ["ARRAY JOIN service_keys", []],
+    ]);
+    const out = await getProviderDomains("ionos", { serviceType: "", service: "ionos.dns", now: true, page: 1 });
+    expect(out.total).toBe(7);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("leaves keys that a provider definition names out of the unmapped list", async () => {
+    ch.query.mockResolvedValueOnce([]);
+    await getUnmappedKeys();
+    const [sql] = ch.query.mock.calls[0];
+    expect(sql).toContain("provider_key NOT IN (SELECT arrayJoin(provider_keys) FROM corpscout.provider_services FINAL)");
   });
 });

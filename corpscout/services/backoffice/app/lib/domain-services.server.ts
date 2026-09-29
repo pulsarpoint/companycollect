@@ -143,6 +143,8 @@ export async function getUnmappedKeys(limit = 100): Promise<UnmappedKey[]> {
     `SELECT provider_key, sum(domains_now) AS domains_now, sum(domains_ever) AS domains_ever
      FROM corpscout.provider_service_counts
      WHERE provider_slug = '' AND service_type = ''
+       -- buckets not yet rebuilt after a definition gained this key still list it unmapped
+       AND provider_key NOT IN (SELECT arrayJoin(provider_keys) FROM corpscout.provider_services FINAL)
      GROUP BY provider_key
      ORDER BY domains_now DESC, provider_key
      LIMIT {limit:UInt32}`,
@@ -156,38 +158,17 @@ const PROVIDER_FILTER = `provider_slug = {slug:String}
   AND ({service:String} = '' OR has(service_keys, {service:String}))
   AND ({now:UInt8} = 0 OR is_current = 1)`;
 
-/** One page of a provider's domains, with its per-type and per-service counts. */
+/** One page of a provider's domains, with its per-type and per-service counts.
+ * Totals and per-type counts come from provider_service_counts (mapped rows
+ * carry the slug as their one provider key, so summing buckets is exact); the
+ * intervals table is read for the page's 50 domains, the service list, and a
+ * total only when a service filter applies. */
 export async function getProviderDomains(slug: string, filter: ProviderDomainsFilter): Promise<ProviderDomainsPage> {
   const params = { slug, type: filter.serviceType, service: filter.service, now: filter.now ? 1 : 0 };
-  const [{ total = 0 } = {}] = await chQuery<{ total: string | number }>(
-    `SELECT uniqExact(root_domain) AS total FROM corpscout.domain_service_intervals WHERE ${PROVIDER_FILTER}`,
-    params,
-  );
-  const pageSize = PROVIDER_DOMAINS_PAGE_SIZE;
-  const lastPage = Math.max(1, Math.ceil(Number(total) / pageSize));
-  const page = Math.min(Math.max(1, filter.page), lastPage);
-  const [rows, types, services] = await Promise.all([
-    chQuery<{
-      root_domain: string;
-      service_types: string[];
-      service_keys: string[];
-      first_seen: string;
-      last_seen: string;
-      is_current: number;
-    }>(
-      `SELECT root_domain, arraySort(groupUniqArray(service_type)) AS service_types,
-              arraySort(arrayDistinct(arrayFlatten(groupArray(service_keys)))) AS service_keys,
-              toString(min(first_seen)) AS first_seen, toString(max(last_seen)) AS last_seen, max(is_current) AS is_current
-       FROM corpscout.domain_service_intervals
-       WHERE ${PROVIDER_FILTER}
-       GROUP BY root_domain
-       ORDER BY root_domain
-       LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-      { ...params, limit: pageSize, offset: (page - 1) * pageSize },
-    ),
+  const [counts, services] = await Promise.all([
     chQuery<{ service_type: string; now: string | number; ever: string | number }>(
-      `SELECT service_type, uniqExactIf(root_domain, is_current = 1) AS now, uniqExact(root_domain) AS ever
-       FROM corpscout.domain_service_intervals
+      `SELECT service_type, sum(domains_now) AS now, sum(domains_ever) AS ever
+       FROM corpscout.provider_service_counts
        WHERE provider_slug = {slug:String}
        GROUP BY service_type`,
       { slug },
@@ -203,7 +184,51 @@ export async function getProviderDomains(slug: string, filter: ProviderDomainsFi
     ),
   ]);
   const byType: TypeCounts = {};
-  for (const t of types) byType[t.service_type] = { now: Number(t.now), ever: Number(t.ever) };
+  let total = 0;
+  for (const c of counts) {
+    const entry = { now: Number(c.now), ever: Number(c.ever) };
+    if (c.service_type !== "") byType[c.service_type] = entry;
+    if (!filter.service && c.service_type === filter.serviceType) total = filter.now ? entry.now : entry.ever;
+  }
+  if (filter.service) {
+    const [{ total: filtered = 0 } = {}] = await chQuery<{ total: string | number }>(
+      `SELECT uniqExact(root_domain) AS total FROM corpscout.domain_service_intervals WHERE ${PROVIDER_FILTER}`,
+      params,
+    );
+    total = Number(filtered);
+  }
+  const pageSize = PROVIDER_DOMAINS_PAGE_SIZE;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, filter.page), lastPage);
+  const domains = (
+    await chQuery<{ root_domain: string }>(
+      `SELECT DISTINCT root_domain
+       FROM corpscout.domain_service_intervals
+       WHERE ${PROVIDER_FILTER}
+       ORDER BY root_domain
+       LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
+      { ...params, limit: pageSize, offset: (page - 1) * pageSize },
+    )
+  ).map((r) => r.root_domain);
+  const rows = domains.length
+    ? await chQuery<{
+        root_domain: string;
+        service_types: string[];
+        service_keys: string[];
+        first_seen: string;
+        last_seen: string;
+        is_current: number;
+      }>(
+        `SELECT root_domain, arraySort(groupUniqArray(service_type)) AS service_types,
+                arraySort(arrayDistinct(arrayFlatten(groupArray(service_keys)))) AS service_keys,
+                toString(min(first_seen)) AS first_seen, toString(max(last_seen)) AS last_seen, max(is_current) AS is_current
+         FROM corpscout.domain_service_intervals
+         WHERE ${PROVIDER_FILTER} AND root_domain IN {domains:Array(String)}
+         GROUP BY root_domain
+         ORDER BY root_domain`,
+        { ...params, domains },
+      )
+    : [];
   return {
     rows: rows.map((r) => ({
       domain: r.root_domain,
@@ -213,7 +238,7 @@ export async function getProviderDomains(slug: string, filter: ProviderDomainsFi
       lastSeen: r.last_seen,
       isCurrent: Number(r.is_current) === 1,
     })),
-    total: Number(total),
+    total,
     page,
     pageSize,
     byType,

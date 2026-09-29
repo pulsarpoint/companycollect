@@ -45,3 +45,12 @@ describe("domain services tab", () => {
     expect(html).toContain('href="/admin/domains/a.se/services"');
   });
 });
+
+describe("domain services tab errors", () => {
+  it("shows an error card instead of failing the page when ClickHouse is down", async () => {
+    server.getDomainServices.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const data = await route.loader({ params: { domain: "a.se" } } as never);
+    expect(data).toMatchObject({ domain: "a.se", error: "connect ECONNREFUSED" });
+    expect(view(data)).toContain("connect ECONNREFUSED");
+  });
+});
